@@ -1,0 +1,12 @@
+# Normalize text files and line-endings
+* text=auto eol=lf
+
+# Windows-friendly for PowerShell scripts
+*.ps1 text eol=crlf
+
+# Binary files
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary

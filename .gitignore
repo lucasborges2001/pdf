@@ -1,0 +1,37 @@
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual envs
+.venv/
+venv/
+env/
+ENV/
+
+# Tool caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# =========================
+# OS / Editors
+# =========================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# =========================
+# Project-generated outputs
+# =========================
+output/
+output/_cache/
+
+# Cache de páginas exportadas desde PDFs (FIG)
+**/assets/_pdfpages/
+
+# Inputs locales/privados (si querés versionar ejemplos, usá /examples)
+input/
