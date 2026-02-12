@@ -3,6 +3,7 @@
 
 # Windows-friendly for PowerShell scripts
 *.ps1 text eol=crlf
+*.sh  text eol=lf
 
 # Binary files
 *.pdf binary
