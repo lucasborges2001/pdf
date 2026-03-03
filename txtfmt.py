@@ -13,7 +13,7 @@ from reportlab.platypus import PageBreak, CondPageBreak
 from reportlab.platypus.paragraph import Paragraph
 
 from .ctx import PdfCtx
-from .images import fig_pdf_page
+from .images import fig_pdf_page, fig as fig_image
 
 Flowable = Any
 
@@ -56,6 +56,13 @@ _FIG_RE = re.compile(
     r'^\[FIG\s+file="(?P<file>[^"]+)"\s+page=(?P<page>\d+)(?:\s+caption="(?P<caption>[^"]*)")?(?:\s+zoom=(?P<zoom>[\d.]+))?\s*\]\s*$'
 )
 
+# [IMG file="..." caption="..." max_w=420 max_h=300]
+_IMG_RE = re.compile(
+    r'^\[IMG\s+file="(?P<file>[^"]+)"(?:\s+caption="(?P<caption>[^"]*)")?(?:\s+max_w=(?P<max_w>[\d.]+))?(?:\s+max_h=(?P<max_h>[\d.]+))?\s*\]\s*$'
+)
+
+
+
 # [PAGEBREAK] / [PB]
 _PB_RE = re.compile(r'^\[(?:PAGEBREAK|PB)\]\s*$')
 
@@ -87,6 +94,18 @@ def parse_fig_marker(line: str) -> Optional[Tuple[str, int, Optional[str], float
     cap = m.group("caption")
     zoom = float(m.group("zoom")) if m.group("zoom") else 2.0
     return fn, page, cap, zoom
+
+
+def parse_img_marker(line: str) -> Optional[Tuple[str, Optional[str], Optional[float], Optional[float]]]:
+    m = _IMG_RE.match(line.strip())
+    if not m:
+        return None
+    fn = m.group("file")
+    cap = m.group("caption")
+    mw = float(m.group("max_w")) if m.group("max_w") else None
+    mh = float(m.group("max_h")) if m.group("max_h") else None
+    return fn, cap, mw, mh
+
 
 
 # ------------------------------
@@ -134,106 +153,52 @@ _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _CODE_RE = re.compile(r"`([^`]+)`")
 _ITALIC_RE = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)")
 
-_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^\s)]+)\)")
-_RAW_URL_RE = re.compile(r"(?<![\"'=])(https?://[^\s<]+[^\s<.,;:!?)\]])")
-_COLOR_TAG_RE = re.compile(r"\[(?:color|c)=(#[0-9A-Fa-f]{6}|[A-Za-z][A-Za-z0-9_-]*)\](.+?)\[/\s*(?:color|c)\]", re.DOTALL)
-
-_INLINE_COLOR_MAP = {
-    "blue": "#2563EB",
-    "green": "#16A34A",
-    "purple": "#7C3AED",
-    "red": "#DC2626",
-    "orange": "#EA580C",
-    "amber": "#D97706",
-    "yellow": "#CA8A04",
-    "gray": "#4B5563",
-    "grey": "#4B5563",
-    "muted": "#4B5563",
-    "accent": "#1D4ED8",
-}
-
-_INLINE_EMOJI_HTML = {
-    "🟦": '<font color="#2563EB">&#9679;</font>',
-    "🟩": '<font color="#16A34A">&#9679;</font>',
-    "🟪": '<font color="#7C3AED">&#9679;</font>',
-    "🟥": '<font color="#DC2626">&#9679;</font>',
-    "🟧": '<font color="#EA580C">&#9679;</font>',
-    "🟨": '<font color="#D97706">&#9679;</font>',
-    "⚠️": '<font color="#D97706"><b>WARN</b></font>',
-    "⚠": '<font color="#D97706"><b>WARN</b></font>',
-    "ℹ️": '<font color="#2563EB"><b>INFO</b></font>',
-    "ℹ": '<font color="#2563EB"><b>INFO</b></font>',
-    "✅": '<font color="#16A34A"><b>OK</b></font>',
-    "❌": '<font color="#DC2626"><b>NO</b></font>',
-}
-
 
 def _normalize_unicode(s: str) -> str:
-    # Normalización safe para PDF core fonts (Helvetica/Courier).
+    # Normalización “safe” para PDF core fonts (Helvetica/Courier).
+    # 1) normaliza compatibilidad
     out = unicodedata.normalize("NFKC", s or "")
 
-    # Sacar joiners/variation selectors que rompen reemplazos
+    # 2) sacá joiners/variation selectors que rompen reemplazos
     out = out.replace("\u200d", "")   # ZWJ
     out = out.replace("\ufe0f", "")   # VS16 (emoji)
     out = out.replace("\ufe0e", "")   # VS15 (text)
     out = out.replace("\u200b", "")   # ZWSP
 
-    # Reemplazos frase
+    # 3) reemplazos “frase” para no duplicar semántica (ej: "🟢 OK" -> "OK")
     out = out.replace("🟢 OK", "OK")
     out = out.replace("🟡 WARN", "WARN")
     out = out.replace("🔴 CRIT", "CRIT")
 
+    # 4) reemplazos simples existentes
     for a, b in _REPLACEMENTS:
         out = out.replace(a, b)
 
-    # Fallback: removemos emojis residuales.
+    # 5) mapa de emojis frecuentes -> texto (sin perder info)
+    emoji_map = {
+        "🟢": "OK",
+        "🟡": "WARN",
+        "🔴": "CRIT",
+        "✅": "OK",
+        "❌": "NO",
+        "⚠": "WARN",
+        "ℹ": "INFO",
+        "💡": "TIP",
+    }
+    for a, b in emoji_map.items():
+        out = out.replace(a, b)
+
+    # 6) fallback: cualquier emoji restante (rangos comunes) lo removemos
     out = re.sub(r"[\U0001F300-\U0001FAFF\U00002600-\U000027BF]", "", out)
     return out
 
 
 
 def _inline_rl(text: str) -> str:
-    raw = text or ""
-    token_map: Dict[str, str] = {}
-
-    def hold(html: str) -> str:
-        key = f"@@RL{len(token_map)}@@"
-        token_map[key] = html
-        return key
-
-    # Preservar emojis/marcadores visuales como HTML inline antes de normalizar
-    for emoji, html in _INLINE_EMOJI_HTML.items():
-        raw = raw.replace(emoji, hold(html))
-
-    t = _xml_escape(_normalize_unicode(raw))
+    t = _xml_escape(_normalize_unicode(text))
     t = _CODE_RE.sub(r'<font face="Courier">\1</font>', t)
     t = _BOLD_RE.sub(r"<b>\1</b>", t)
     t = _ITALIC_RE.sub(r"<i>\1</i>", t)
-
-    def repl_color(m: re.Match[str]) -> str:
-        color_key = (m.group(1) or "").strip()
-        body = m.group(2) or ""
-        color = _INLINE_COLOR_MAP.get(color_key.lower(), color_key)
-        if not re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
-            return m.group(0)
-        return f'<font color="{color}">{body}</font>'
-
-    t = _COLOR_TAG_RE.sub(repl_color, t)
-
-    def repl_md_link(m: re.Match[str]) -> str:
-        label = m.group(1) or ""
-        url = (m.group(2) or "").strip()
-        return hold(f'<link href="{url}" color="#1D4ED8"><u>{label}</u></link>')
-
-    def repl_raw_url(m: re.Match[str]) -> str:
-        url = (m.group(1) or "").strip()
-        return hold(f'<link href="{url}" color="#1D4ED8"><u>{url}</u></link>')
-
-    t = _MD_LINK_RE.sub(repl_md_link, t)
-    t = _RAW_URL_RE.sub(repl_raw_url, t)
-
-    for key, html in token_map.items():
-        t = t.replace(key, html)
     return t
 
 
@@ -366,6 +331,7 @@ def txt_to_flowables(
     text: str,
     *,
     resolve_pdf: Callable[[str], Path],
+    resolve_img: Optional[Callable[[str], Path]] = None,
     cache_dir: Optional[Path] = None,
     default_zoom: float = 2.0,
     _used_keys: Optional[Dict[str, int]] = None,
@@ -381,6 +347,7 @@ def txt_to_flowables(
             ctx,
             "\n".join(block_lines),
             resolve_pdf=resolve_pdf,
+            resolve_img=resolve_img,
             cache_dir=cache_dir,
             default_zoom=default_zoom,
             _used_keys=used_keys,
@@ -399,6 +366,24 @@ def txt_to_flowables(
         # PageBreak explícito
         if _PB_RE.match(line):
             story.append(PageBreak())
+            i += 1
+            continue
+
+        # IMG marker
+        img = parse_img_marker(line)
+        if img:
+            fn, cap, max_w, max_h = img
+            img_path = resolve_img(fn) if resolve_img is not None else Path(fn)
+            _condbreak(story, _MIN_SPACE_BEFORE_FIG)
+            story.extend(
+                fig_image(
+                    ctx,
+                    img_path,
+                    caption=sanitize_para(cap) if cap else None,
+                    max_w=max_w,
+                    max_h=max_h,
+                )
+            )
             i += 1
             continue
 
@@ -617,6 +602,8 @@ def txt_to_flowables(
             if _PB_RE.match(peek):
                 break
             if parse_fig_marker(peek):
+                break
+            if parse_img_marker(peek):
                 break
             if _BLOCK_OPEN_RE.match(peek):
                 break

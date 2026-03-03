@@ -18,13 +18,16 @@ Ejemplo canónico:
   Practico/
     00Practico/
       00Practico.txt
-      assets/_pdfpages/         (se crea solo al exportar páginas de PDFs)
+      assets/_pdfpages/
+      assets/         (se crea solo al exportar páginas de PDFs)
+      assets/                  (imágenes locales para [IMG ...])
     01Practico/
       01Practico.txt
   Taller/
     00Taller/
       00Taller.txt
       assets/_pdfpages/
+      assets/
   Teorico/
     TxxAlgo.pdf
   Scripts/
@@ -431,12 +434,44 @@ Cache:
 Notas:
 - Si falta PyMuPDF (`fitz`), las figuras desde PDF se omiten (y puede loguear WARN si está activado).
 
+## 15.5) Imágenes directas (PNG/JPG/WebP)
+
+Marcador:
+
+[IMG file="diagrama.png" caption="Diagrama general" max_w=420 max_h=300]
+
+Parámetros:
+- file   (obligatorio): nombre (o ruta relativa) de la imagen
+- caption (opcional): texto bajo la figura
+- max_w  (opcional): ancho máximo en puntos (pt). Si se omite, se ajusta al ancho útil del frame.
+- max_h  (opcional): alto máximo en puntos (pt). Si se omite, se ajusta al alto útil del frame.
+
+Resolución de `file` (orden aproximado):
+
+- En build_all (Practico/Taller):
+  1) `<work_dir>/assets/`
+  2) `<work_dir>/`
+  3) `Teorico/`, `Practico/`, `Taller/`, `Parcial/`, `Examen/`, raíz de la materia (y sus `assets/`)
+  4) fallback: `Scripts/_pdf/assets/`
+
+- En build.py (Scripts/_pdf/input):
+  Para un input como `input/Docker.txt`:
+  1) `input/Docker/`
+  2) `input/`
+  3) `input/assets/`
+  4) luego el mismo fallback por carpetas de materia que build_all.
+
+Recomendación:
+- Para prácticos/talleres: guardá imágenes en `assets/` dentro de la carpeta del trabajo.
+- Para builds rápidos en `Scripts/_pdf/input`: guardá imágenes en `input/<NombreDelTxt>/`.
+
+
+
 ---
 
 ## 16) Cosas NO soportadas (importante)
 
-- No hay directiva en `.txt` para insertar imágenes PNG/JPG “directo”.
-  Hoy la inserción de imágenes está pensada para páginas de PDFs (`[FIG ...]`).
+- Imágenes directas: ahora existe `[IMG ...]` (ver §15.5).
 - No hay tablas “CSV” ni celdas multi-línea.
 - No hay enlaces arbitrarios en texto (HTML se escapa).
 - No hay soporte formal para sublistas (solo listas planas).
