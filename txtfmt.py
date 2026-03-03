@@ -134,52 +134,106 @@ _BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
 _CODE_RE = re.compile(r"`([^`]+)`")
 _ITALIC_RE = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)")
 
+_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^\s)]+)\)")
+_RAW_URL_RE = re.compile(r"(?<![\"'=])(https?://[^\s<]+[^\s<.,;:!?)\]])")
+_COLOR_TAG_RE = re.compile(r"\[(?:color|c)=(#[0-9A-Fa-f]{6}|[A-Za-z][A-Za-z0-9_-]*)\](.+?)\[/\s*(?:color|c)\]", re.DOTALL)
+
+_INLINE_COLOR_MAP = {
+    "blue": "#2563EB",
+    "green": "#16A34A",
+    "purple": "#7C3AED",
+    "red": "#DC2626",
+    "orange": "#EA580C",
+    "amber": "#D97706",
+    "yellow": "#CA8A04",
+    "gray": "#4B5563",
+    "grey": "#4B5563",
+    "muted": "#4B5563",
+    "accent": "#1D4ED8",
+}
+
+_INLINE_EMOJI_HTML = {
+    "🟦": '<font color="#2563EB">&#9679;</font>',
+    "🟩": '<font color="#16A34A">&#9679;</font>',
+    "🟪": '<font color="#7C3AED">&#9679;</font>',
+    "🟥": '<font color="#DC2626">&#9679;</font>',
+    "🟧": '<font color="#EA580C">&#9679;</font>',
+    "🟨": '<font color="#D97706">&#9679;</font>',
+    "⚠️": '<font color="#D97706"><b>WARN</b></font>',
+    "⚠": '<font color="#D97706"><b>WARN</b></font>',
+    "ℹ️": '<font color="#2563EB"><b>INFO</b></font>',
+    "ℹ": '<font color="#2563EB"><b>INFO</b></font>',
+    "✅": '<font color="#16A34A"><b>OK</b></font>',
+    "❌": '<font color="#DC2626"><b>NO</b></font>',
+}
+
 
 def _normalize_unicode(s: str) -> str:
-    # Normalización “safe” para PDF core fonts (Helvetica/Courier).
-    # 1) normaliza compatibilidad
+    # Normalización safe para PDF core fonts (Helvetica/Courier).
     out = unicodedata.normalize("NFKC", s or "")
 
-    # 2) sacá joiners/variation selectors que rompen reemplazos
+    # Sacar joiners/variation selectors que rompen reemplazos
     out = out.replace("\u200d", "")   # ZWJ
     out = out.replace("\ufe0f", "")   # VS16 (emoji)
     out = out.replace("\ufe0e", "")   # VS15 (text)
     out = out.replace("\u200b", "")   # ZWSP
 
-    # 3) reemplazos “frase” para no duplicar semántica (ej: "🟢 OK" -> "OK")
+    # Reemplazos frase
     out = out.replace("🟢 OK", "OK")
     out = out.replace("🟡 WARN", "WARN")
     out = out.replace("🔴 CRIT", "CRIT")
 
-    # 4) reemplazos simples existentes
     for a, b in _REPLACEMENTS:
         out = out.replace(a, b)
 
-    # 5) mapa de emojis frecuentes -> texto (sin perder info)
-    emoji_map = {
-        "🟢": "OK",
-        "🟡": "WARN",
-        "🔴": "CRIT",
-        "✅": "OK",
-        "❌": "NO",
-        "⚠": "WARN",
-        "ℹ": "INFO",
-        "💡": "TIP",
-    }
-    for a, b in emoji_map.items():
-        out = out.replace(a, b)
-
-    # 6) fallback: cualquier emoji restante (rangos comunes) lo removemos
+    # Fallback: removemos emojis residuales.
     out = re.sub(r"[\U0001F300-\U0001FAFF\U00002600-\U000027BF]", "", out)
     return out
 
 
 
 def _inline_rl(text: str) -> str:
-    t = _xml_escape(_normalize_unicode(text))
+    raw = text or ""
+    token_map: Dict[str, str] = {}
+
+    def hold(html: str) -> str:
+        key = f"@@RL{len(token_map)}@@"
+        token_map[key] = html
+        return key
+
+    # Preservar emojis/marcadores visuales como HTML inline antes de normalizar
+    for emoji, html in _INLINE_EMOJI_HTML.items():
+        raw = raw.replace(emoji, hold(html))
+
+    t = _xml_escape(_normalize_unicode(raw))
     t = _CODE_RE.sub(r'<font face="Courier">\1</font>', t)
     t = _BOLD_RE.sub(r"<b>\1</b>", t)
     t = _ITALIC_RE.sub(r"<i>\1</i>", t)
+
+    def repl_color(m: re.Match[str]) -> str:
+        color_key = (m.group(1) or "").strip()
+        body = m.group(2) or ""
+        color = _INLINE_COLOR_MAP.get(color_key.lower(), color_key)
+        if not re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
+            return m.group(0)
+        return f'<font color="{color}">{body}</font>'
+
+    t = _COLOR_TAG_RE.sub(repl_color, t)
+
+    def repl_md_link(m: re.Match[str]) -> str:
+        label = m.group(1) or ""
+        url = (m.group(2) or "").strip()
+        return hold(f'<link href="{url}" color="#1D4ED8"><u>{label}</u></link>')
+
+    def repl_raw_url(m: re.Match[str]) -> str:
+        url = (m.group(1) or "").strip()
+        return hold(f'<link href="{url}" color="#1D4ED8"><u>{url}</u></link>')
+
+    t = _MD_LINK_RE.sub(repl_md_link, t)
+    t = _RAW_URL_RE.sub(repl_raw_url, t)
+
+    for key, html in token_map.items():
+        t = t.replace(key, html)
     return t
 
 
