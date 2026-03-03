@@ -15,7 +15,12 @@ Header opcional (primera línea no vacía). No se imprime:
 Salida (copias):
   Por defecto copia TODOS los .pdf directo a: <Materia>/Resumenes/
 
-Ejemplos (ejecutar desde <Materia>/Scripts):
+Ejemplos:
+  # Desde cualquier carpeta, pasando la Materia explícita
+  python -m _pdf.build_all D:\ArqComp
+
+  # Layout legacy (si _pdf está dentro de <Materia>/Scripts)
+  python -m _pdf.build_all
   python3 -m _pdf.build_all
   python3 -m _pdf.build_all --area practico
   python3 -m _pdf.build_all --only 00 01
@@ -32,9 +37,42 @@ import shutil
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple, Union
 
-from .framework import DocSpec, PdfCtx, PdfTheme, build_pdf
-from .paths import materia_root, output_root, practico_dir, taller_dir
-from .txtfmt import txt_to_flowables
+# --------------------------------------------------------------------------------------
+# Import bootstrap
+#
+# Ver explicación en build.py: soporta correr
+#   - desde el padre: `python -m <pkg>.build_all`
+#   - desde dentro del paquete: `python -m build_all` o `python build_all.py`
+# --------------------------------------------------------------------------------------
+
+if __package__ in (None, ""):
+    import sys as _sys
+    from importlib import import_module as _import_module
+
+    _pkg_dir = Path(__file__).resolve().parent
+    _pkg_name = _pkg_dir.name
+    _parent = _pkg_dir.parent
+    if str(_parent) not in _sys.path:
+        _sys.path.insert(0, str(_parent))
+
+    _framework = _import_module(f"{_pkg_name}.framework")
+    _paths = _import_module(f"{_pkg_name}.paths")
+    _txtfmt = _import_module(f"{_pkg_name}.txtfmt")
+
+    DocSpec = _framework.DocSpec
+    PdfCtx = _framework.PdfCtx
+    PdfTheme = _framework.PdfTheme
+    build_pdf = _framework.build_pdf
+
+    find_materia_root = _paths.find_materia_root
+    output_root = _paths.output_root
+    practico_dir = _paths.practico_dir
+    taller_dir = _paths.taller_dir
+    txt_to_flowables = _txtfmt.txt_to_flowables
+else:
+    from .framework import DocSpec, PdfCtx, PdfTheme, build_pdf
+    from .paths import find_materia_root, output_root, practico_dir, taller_dir
+    from .txtfmt import txt_to_flowables
 
 Scalar = Union[str, bool, int]
 
@@ -140,6 +178,8 @@ def _resolve_pdf_factory(*, materia: Path, work_dir: Path):
     teo = materia / "Teorico"
     pra = materia / "Practico"
     tal = materia / "Taller"
+    par = materia / "Parcial"
+    exa = materia / "Examen"
 
     def resolve_pdf(filename: str) -> Path:
         candidates = [
@@ -147,6 +187,8 @@ def _resolve_pdf_factory(*, materia: Path, work_dir: Path):
             teo / filename,
             pra / filename,
             tal / filename,
+            par / filename,
+            exa / filename,
             materia / filename,
         ]
         for p in candidates:
@@ -159,47 +201,35 @@ def _resolve_pdf_factory(*, materia: Path, work_dir: Path):
 
 
 def _resolve_img_factory(*, materia: Path, work_dir: Path):
+    """Resuelve imágenes para [IMG ...].
+
+    Busca en (prioridad):
+      1) work_dir/
+      2) work_dir/assets/
+      3) <Materia>/(Teorico|Practico|Taller|Parcial|Examen)/ y sus assets/
+      4) <Materia>/assets/
+      5) <Materia>/Scripts/_pdf/assets/  (legacy)
     """
-    Resolución de imágenes para [IMG file="..."].
-
-    Busca primero en:
-      - <work_dir>/assets/<file>
-      - <work_dir>/<file>
-
-    Luego en carpetas típicas de la materia (raíz y assets):
-      - Teorico/, Practico/, Taller/, Parcial/, Examen/, <Materia>/
-    Y finalmente al fallback del paquete: Scripts/_pdf/assets/
-    """
-    pkg_assets = Path(__file__).resolve().parent / "assets"  # Scripts/_pdf/assets
-
-    teo = materia / "Teorico"
-    pra = materia / "Practico"
-    tal = materia / "Taller"
-    par = materia / "Parcial"
-    exa = materia / "Examen"
+    areas = ["Teorico", "Practico", "Taller", "Parcial", "Examen"]
+    area_dirs = [materia / a for a in areas]
+    area_assets = [d / "assets" for d in area_dirs]
+    materia_assets = materia / "assets"
+    legacy_assets = materia / "Scripts" / "_pdf" / "assets"
+    work_assets = work_dir / "assets"
 
     def resolve_img(filename: str) -> Path:
-        candidates = [
-            work_dir / "assets" / filename,
-            work_dir / filename,
-            teo / "assets" / filename,
-            pra / "assets" / filename,
-            tal / "assets" / filename,
-            par / "assets" / filename,
-            exa / "assets" / filename,
-            materia / "assets" / filename,
-            teo / filename,
-            pra / filename,
-            tal / filename,
-            par / filename,
-            exa / filename,
-            materia / filename,
-            pkg_assets / filename,
-        ]
-
-        for p in candidates:
-            if p.is_file():
-                return p
+        p = Path(filename)
+        if p.is_absolute():
+            return p
+        candidates = [work_dir / filename, work_assets / filename]
+        for d in area_dirs:
+            candidates.append(d / filename)
+        for d in area_assets:
+            candidates.append(d / filename)
+        candidates.extend([materia_assets / filename, legacy_assets / filename, materia / filename])
+        for c in candidates:
+            if c.is_file():
+                return c
         return candidates[0]
 
     return resolve_img
@@ -354,7 +384,10 @@ def build_area(
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--materia", type=str, default=None, help="Ruta a <Materia>. Si se omite, se infiere desde Scripts/_pdf.")
+    ap.add_argument("materia_path", nargs="?", default=None,
+                    help="Ruta a <Materia> (o a una subcarpeta dentro, ej: Practico/01Practico).")
+    ap.add_argument("--materia", type=str, default=None,
+                    help="Compat: Ruta a <Materia>. Recomendado usar el argumento posicional.")
     ap.add_argument("--area", type=str, choices=["practico", "taller", "both"], default="both")
     ap.add_argument("--only", nargs="*", default=None, help="Ej: --only 00 01 07")
     ap.add_argument("--txt-pattern", type=str, default=None, help="Glob de txt por carpeta. Default: *Practico.txt / *Taller.txt")
@@ -368,7 +401,12 @@ def main() -> None:
     if not args.no_warn_missing_assets:
         os.environ.setdefault("PDF_WARN_MISSING_ASSETS", "1")
 
-    m = Path(args.materia).resolve() if args.materia else materia_root().resolve()
+    start = Path(args.materia_path).resolve() if args.materia_path else (Path(args.materia).resolve() if args.materia else None)
+
+    try:
+        m = find_materia_root(start).resolve()
+    except FileNotFoundError as e:
+        raise SystemExit(f"[ERROR] {e}")
     out_root = Path(args.output_dir).resolve() if args.output_dir else output_root(m)
 
     do_output = not args.no_output

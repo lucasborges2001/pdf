@@ -6,10 +6,6 @@ Versión simple del builder:
 - Lee todos los .txt de: Scripts/_pdf/input/*.txt
 - Genera PDFs en:       Scripts/_pdf/output/*.pdf
 
-- Assets opcionales por documento:
-  Si existe una carpeta con el mismo nombre del .txt dentro de input/ (ej: input/Docker/),
-  ahí se buscan imágenes para [IMG ...] y otros assets.
-
 Soporta el mismo formato que build_all.py:
 - Header opcional: [DOC key="value" ...]
 - Directivas del txtfmt (TOC, headings, FIG, etc.)
@@ -25,9 +21,42 @@ import shlex
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
-from .framework import DocSpec, PdfCtx, PdfTheme, build_pdf
-from .paths import materia_root
-from .txtfmt import txt_to_flowables
+# --------------------------------------------------------------------------------------
+# Import bootstrap
+#
+# Este repo suele correrse en 2 modos:
+#   1) Como paquete (recomendado): desde el padre -> `python -m <pkg>.build`
+#   2) Desde dentro de la carpeta del paquete: `python -m build` (o `python build.py`)
+#
+# En el modo (2), las imports relativas (from .x import y) fallan porque no hay "parent package".
+# Para hacerlo robusto, detectamos ese caso y re-importamos vía el nombre del directorio.
+# --------------------------------------------------------------------------------------
+
+if __package__ in (None, ""):
+    import sys as _sys
+    from importlib import import_module as _import_module
+
+    _pkg_dir = Path(__file__).resolve().parent
+    _pkg_name = _pkg_dir.name
+    _parent = _pkg_dir.parent
+    if str(_parent) not in _sys.path:
+        _sys.path.insert(0, str(_parent))
+
+    _framework = _import_module(f"{_pkg_name}.framework")
+    _paths = _import_module(f"{_pkg_name}.paths")
+    _txtfmt = _import_module(f"{_pkg_name}.txtfmt")
+
+    DocSpec = _framework.DocSpec
+    PdfCtx = _framework.PdfCtx
+    PdfTheme = _framework.PdfTheme
+    build_pdf = _framework.build_pdf
+
+    find_materia_root = _paths.find_materia_root
+    txt_to_flowables = _txtfmt.txt_to_flowables
+else:
+    from .framework import DocSpec, PdfCtx, PdfTheme, build_pdf
+    from .paths import find_materia_root
+    from .txtfmt import txt_to_flowables
 
 Scalar = Union[str, bool, int]
 
@@ -131,52 +160,36 @@ def _resolve_pdf_factory(*, materia: Path, txt_dir: Path):
 
 
 
-def _resolve_img_factory(*, materia: Path, txt_path: Path):
+def _resolve_img_factory(*, root: Path, input_dir: Path, txt_path: Path):
+    """Resuelve imágenes para [IMG ...].
+
+    Orden de búsqueda (prioridad):
+      1) input/<stem>/ (carpeta por documento)
+      2) input/<stem>/assets/
+      3) input/ (mismo directorio del .txt)
+      4) input/assets/
+      5) <root>/assets/
     """
-    Resolución de imágenes para [IMG file="..."].
-
-    Para un input como input/Docker.txt, busca primero en:
-      - input/Docker/<file>
-      - input/<file>
-      - input/assets/<file> (si existe)
-
-    Luego cae a carpetas típicas de la materia:
-      - Teorico/, Practico/, Taller/, Parcial/, Examen/, <Materia>/
-    Y finalmente al fallback del paquete: Scripts/_pdf/assets/
-    """
-    txt_dir = txt_path.parent
-    per_doc_dir = txt_dir / txt_path.stem           # input/Docker/
-    input_assets = txt_dir / "assets"               # input/assets/
-    pkg_assets = Path(__file__).resolve().parent / "assets"  # Scripts/_pdf/assets
-
-    teo = materia / "Teorico"
-    pra = materia / "Practico"
-    tal = materia / "Taller"
-    par = materia / "Parcial"
-    exa = materia / "Examen"
+    doc_dir = input_dir / txt_path.stem
+    doc_assets = doc_dir / "assets"
+    input_assets = input_dir / "assets"
+    root_assets = root / "assets"
 
     def resolve_img(filename: str) -> Path:
+        p = Path(filename)
+        if p.is_absolute():
+            return p
         candidates = [
-            per_doc_dir / filename,
-            txt_dir / filename,
+            doc_dir / filename,
+            doc_assets / filename,
+            txt_path.parent / filename,
             input_assets / filename,
-            teo / filename,
-            pra / filename,
-            tal / filename,
-            par / filename,
-            exa / filename,
-            materia / filename,
-            pkg_assets / filename,
+            root_assets / filename,
+            root / filename,
         ]
-
-        # también probamos assets/<file> en carpetas base si el caller no lo puso
-        if not str(filename).replace("\\", "/").startswith("assets/"):
-            for base in (per_doc_dir, txt_dir, teo, pra, tal, par, exa, materia):
-                candidates.insert(0, base / "assets" / filename)
-
-        for p in candidates:
-            if p.is_file():
-                return p
+        for c in candidates:
+            if c.is_file():
+                return c
         return candidates[0]
 
     return resolve_img
@@ -224,7 +237,7 @@ def build_one(
             include_toc=bool(attrs.get("include_toc", True)),
             toc_title=str(attrs.get("toc_title") or "Contenido"),
             toc_max_level=int(attrs.get("toc_max_level", 3)) if isinstance(attrs.get("toc_max_level", 3), int) else 3,
-            footer_left=str(attrs.get("footer_left") or ""),
+            footer_left=str(attrs.get("footer_left") or "Lucas Borges"),
             footer_center=str(attrs.get("footer_center") or ""),
             footer_right=str(attrs.get("footer_right") or ""),
             footer_show_page=bool(attrs.get("footer_show_page", True)),
@@ -241,7 +254,7 @@ def build_one(
         # Cache local para [FIG ...] (páginas exportadas)
         cache_dir = output_dir / "_cache" / txt_path.stem
         resolve_pdf = _resolve_pdf_factory(materia=materia, txt_dir=txt_path.parent)
-        resolve_img = _resolve_img_factory(materia=materia, txt_path=txt_path)
+        resolve_img = _resolve_img_factory(root=txt_path.parent.parent.resolve(), input_dir=txt_path.parent, txt_path=txt_path)
 
         def content(ctx: PdfCtx):
             return txt_to_flowables(ctx, body, resolve_pdf=resolve_pdf, resolve_img=resolve_img, cache_dir=cache_dir)
@@ -255,6 +268,7 @@ def build_one(
 
 def main() -> None:
     ap = argparse.ArgumentParser()
+    ap.add_argument("--materia", type=str, default=None, help="Ruta a <Materia> (opcional). Si se omite, se intenta inferir desde CWD; si no, se usa input_dir.parent.")
     ap.add_argument("--input-dir", type=str, default=None, help="Default: Scripts/_pdf/input")
     ap.add_argument("--output-dir", type=str, default=None, help="Default: Scripts/_pdf/output")
     ap.add_argument("--clean", action="store_true", help="Borra *.pdf en output antes de compilar")
@@ -284,9 +298,15 @@ def main() -> None:
     txts = sorted(input_dir.glob("*.txt"))
     if not txts:
         print("[WARN] no hay .txt en input/")
-        raise SystemExit(0)
+        raise SystemExit(0)    # Materia es opcional: sólo se usa para ayudar a resolver PDFs en [FIG ...].
+    # En este repo (modo input/output) normalmente NO hay estructura <Materia>,
+    # así que por defecto usamos el root del proyecto (padre de input_dir).
+    if args.materia:
+        materia = Path(args.materia).expanduser().resolve()
+    else:
+        materia = input_dir.parent.resolve()
 
-    materia = materia_root().resolve()
+
 
     any_error = False
     ok = 0
