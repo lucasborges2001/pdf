@@ -1,5 +1,7 @@
 # Uso
 
+> Regla operativa: ejecutar los comandos desde la carpeta **padre** de `_pdf` (ej: `cd D:\scripts`) para que `python -m _pdf...` resuelva el paquete.
+
 Este repo está pensado para estar **centralizado** (por ejemplo `D:\Scripts\_pdf\`) y compilar:
 
 - **Build simple**: `_pdf/input/*.txt` → `_pdf/output/*.pdf`
@@ -25,12 +27,12 @@ python -m _pdf.build --check --show-skipped
 
 ### 3) Build por materia (materia → Resumenes)
 ```bash
-python -m _pdf.build_materia D:\ArqComp
-python -m _pdf.build_materia D:\ArqComp --area practico
-python -m _pdf.build_materia D:\ArqComp --only 00 01 07
-python -m _pdf.build_materia D:\ArqComp --check
-python -m _pdf.build_materia D:\ArqComp --check --show-skipped
-python -m _pdf.build_materia D:\ArqComp --check --strict
+python -m _pdf.build_materia --materia D:\ArqComp
+python -m _pdf.build_materia --materia D:\ArqComp --area practico
+python -m _pdf.build_materia --materia D:\ArqComp --only 00 01 07
+python -m _pdf.build_materia --materia D:\ArqComp --check
+python -m _pdf.build_materia --materia D:\ArqComp --check --show-skipped
+python -m _pdf.build_materia --materia D:\ArqComp --check --strict
 ```
 
 ### 4) Scan (sin generar PDFs)
@@ -100,5 +102,5 @@ Todos los comandos soportan `--log <archivo>` para guardar la salida (además de
 Ejemplo:
 
 ```powershell
-python -m _pdf.build_materia D:\ArqComp --check --log D:\logs\pdf_check.txt
+python -m _pdf.build_materia --materia D:\ArqComp --check --log D:\logs\pdf_check.txt
 ```

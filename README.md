@@ -2,68 +2,77 @@
 
 Framework Python para convertir documentos `.txt` en PDFs consistentes (TOC, bloques, imágenes, tipografías y metadatos).
 
-Este repo está pensado para estar **centralizado** (por ejemplo `D:\Scripts\_pdf\`) y compilar tanto:
+Este repo está pensado para estar **centralizado** (por ejemplo `D:\scripts\_pdf\`) y compilar:
 
-- `_pdf/input/*.txt` → `_pdf/output/*.pdf` (build simple)
-- `<Materia>/**` → `<Materia>/Resumenes/**` (build por materia)
+- `_pdf/input/*.txt` → `_pdf/output/*.pdf` (**build simple**)
+- `<Materia>/**` → `<Materia>/Resumenes/**` (**build por materia**, pasando la ruta)
+
+Entrada recomendada para mantenimiento: `docs/INDEX.md`.
+
+---
 
 ## Quickstart
 
-```bash
+Ejecutar desde la carpeta **padre** de `_pdf` (para que `python -m _pdf...` funcione):
+
+```powershell
+cd D:\scripts
 python -m _pdf.help
 python -m _pdf.build --check
 python -m _pdf.build
-python -m _pdf.build_materia D:\ArqComp --check
-python -m _pdf.build_materia D:\ArqComp
+python -m _pdf.build_materia --materia D:\ArqComp --check
+python -m _pdf.build_materia --materia D:\ArqComp
 ```
 
-Para más detalles ver `docs/USAGE.md`.
+Para más detalle operativo ver `docs/USAGE.md`.
 
-> Nota: este framework está diseñado para ejecutarse desde `<Materia>/Scripts` (el padre de `_pdf`).
+---
 
 ## Requisitos
 
 - Python 3.10+
 - `reportlab` (y `pillow` si usás imágenes)
 
-Instalación rápida:
+Instalación rápida (en venv):
 
-```bash
+```powershell
 python -m venv .venv
-# Windows
 .venv\Scripts\pip install -r _pdf\requirements.txt
-# Linux/Mac
-.venv/bin/pip install -r _pdf/requirements.txt
 ```
+
+---
 
 ## Uso
 
-Desde `<Materia>/Scripts`:
+### Build simple (input → output)
 
-```bash
-python -m _pdf.build_all
+```powershell
+python -m _pdf.build
+python -m _pdf.build --clean
+python -m _pdf.build --check
+python -m _pdf.build --check --strict
 ```
 
-Atajos útiles:
+### Build por materia (materia → Resumenes)
 
-```bash
-python -m _pdf.build_all --area practico
-python -m _pdf.build_all --area taller
-python -m _pdf.build_all --only 00 01
-python -m _pdf.build_all --strict
+```powershell
+python -m _pdf.build_materia --materia D:\ArqComp
+python -m _pdf.build_materia --materia D:\ArqComp --area practico
+python -m _pdf.build_materia --materia D:\ArqComp --area taller
+python -m _pdf.build_materia --materia D:\ArqComp --only 00 01
+python -m _pdf.build_materia --materia D:\ArqComp --check --strict
 ```
 
-## Formato del `.txt`
+### Scan (sin generar PDFs)
 
-La especificación de formato está en `docs/FORMAT.md`.
+```powershell
+python -m _pdf.scan --input
+python -m _pdf.scan --materia D:\ArqComp --strict
+```
 
-## Desarrollo
+---
 
-- `make -C _pdf help` (si tenés GNU Make)
-- Scripts PowerShell en `scripts/`.
-
-
-### Flags de salida (comunes)
+## Flags comunes (salida)
 
 - `--quiet`
 - `--only-summary`
@@ -71,27 +80,34 @@ La especificación de formato está en `docs/FORMAT.md`.
 - `-v` / `-vv`
 - `--no-color`
 - `--ascii`
+- `--max-issues N`
+- `--show-skipped`
+- `--max-skipped N`
+- `--log FILE`
+- `--log-json FILE`
 
+---
 
-### Guardar salida de terminal
+## Formato del `.txt`
 
-Podés agregar `--log <archivo>` a cualquier comando para guardar el output en un archivo.
+La especificación de formato está en `docs/FORMAT.md`.
 
+---
 
 ## Tests
 
-Ejecutar suite mínima:
-
 ```powershell
-python -m unittest discover -s _pdf/tests
+python -m unittest discover -s _pdf\tests
 ```
 
+---
 
 ## JSON (CI)
 
-Para scan/check:
+Ejemplos:
 
 ```powershell
 python -m _pdf.scan --materia D:\ArqComp --log-json D:\logs\scan.json
 python -m _pdf.build --check --log-json D:\logs\check.json
+python -m _pdf.build_materia --materia D:\ArqComp --check --log-json D:\logs\check_materia.json
 ```
