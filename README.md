@@ -41,17 +41,21 @@ python -m venv .venv
 Desde `<Materia>/Scripts`:
 
 ```bash
-python -m _pdf.build_all
+python -m _pdf.build_materia ..
 ```
 
 Atajos útiles:
 
 ```bash
-python -m _pdf.build_all --area practico
-python -m _pdf.build_all --area taller
-python -m _pdf.build_all --only 00 01
-python -m _pdf.build_all --strict
+python -m _pdf.build_materia .. --area practico
+python -m _pdf.build_materia .. --area taller
+python -m _pdf.build_materia .. --only 00 01
+python -m _pdf.build_materia .. --check --strict
 ```
+
+## Mapa del repo
+
+Entrada recomendada para desarrollo: `docs/INDEX.md`.
 
 ## Formato del `.txt`
 
