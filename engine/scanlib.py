@@ -162,15 +162,19 @@ def lint_txt(*, txt_path: Path, materia: Optional[Path] = None, extra_search_dir
     for i, raw in enumerate(lines, start=1):
         s = raw.strip()
 
-        if FENCE_OPEN_RE.match(s):
-            in_fence = True
-            fence_open_line = i
-            continue
-        if FENCE_CLOSE_RE.match(s):
-            if not in_fence:
-                issues.append(Issue("ERROR", txt_path, i, "Cierre de ``` sin apertura previa."))
+        # fenced code (```lang ... ```)
+        # Nota: la línea de cierre es literalmente ``` y también matchea el regex de apertura.
+        # Por eso el cierre debe evaluarse *primero* cuando ya estamos dentro de un fence.
+        if in_fence and FENCE_CLOSE_RE.match(s):
             in_fence = False
             fence_open_line = None
+            continue
+        if (not in_fence) and FENCE_CLOSE_RE.match(s):
+            issues.append(Issue("ERROR", txt_path, i, "Cierre de ``` sin apertura previa."))
+            continue
+        if (not in_fence) and FENCE_OPEN_RE.match(s):
+            in_fence = True
+            fence_open_line = i
             continue
         if in_fence:
             continue
@@ -251,18 +255,35 @@ def lint_txt(*, txt_path: Path, materia: Optional[Path] = None, extra_search_dir
 
 
 def discover_txts(base: Path, *, exclude_dirs: Optional[Iterable[str]] = None) -> List[Path]:
-    exclude = set(exclude_dirs or [])
-    exclude |= {"Resumenes", "output", "__pycache__", ".git", ".venv", "venv", ".mypy_cache", ".pytest_cache"}
+    """
+    Descubre `.txt` dentro de una materia.
+
+    - El filtro de exclusión es *case-insensitive* para que funcione igual en Windows/macOS/Linux.
+    - Por defecto ignora carpetas de salida y metadatos, y también `Scripts/` y `_pdf/` para evitar
+      escanear una copia embebida del repo dentro de una materia (setup viejo).
+    """
+    exclude = {s.lower() for s in (exclude_dirs or [])}
+    exclude |= {
+        "resumenes",
+        "output",
+        "__pycache__",
+        ".git",
+        ".venv",
+        "venv",
+        ".mypy_cache",
+        ".pytest_cache",
+        "scripts",
+        "_pdf",
+    }
 
     out: List[Path] = []
     for p in base.rglob("*.txt"):
-        if any(part in exclude for part in p.parts):
+        if any(part.lower() in exclude for part in p.parts):
             continue
         if p.name.startswith("."):
             continue
         out.append(p)
     return sorted(out)
-
 
 def _is_candidate_txt(p: Path) -> bool:
     try:
