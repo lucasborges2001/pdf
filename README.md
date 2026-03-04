@@ -46,15 +46,21 @@ python -m venv .venv
 
 ### Build simple (input → output)
 
+<<<<<<< HEAD
 ```powershell
 python -m _pdf.build
 python -m _pdf.build --clean
 python -m _pdf.build --check
 python -m _pdf.build --check --strict
+=======
+```bash
+python -m _pdf.build_materia ..
+>>>>>>> a466de344d0bb9a968c160c1247e6dda6df08828
 ```
 
 ### Build por materia (materia → Resumenes)
 
+<<<<<<< HEAD
 ```powershell
 python -m _pdf.build_materia --materia D:\ArqComp
 python -m _pdf.build_materia --materia D:\ArqComp --area practico
@@ -64,6 +70,20 @@ python -m _pdf.build_materia --materia D:\ArqComp --check --strict
 ```
 
 ### Scan (sin generar PDFs)
+=======
+```bash
+python -m _pdf.build_materia .. --area practico
+python -m _pdf.build_materia .. --area taller
+python -m _pdf.build_materia .. --only 00 01
+python -m _pdf.build_materia .. --check --strict
+```
+
+## Mapa del repo
+
+Entrada recomendada para desarrollo: `docs/INDEX.md`.
+
+## Formato del `.txt`
+>>>>>>> a466de344d0bb9a968c160c1247e6dda6df08828
 
 ```powershell
 python -m _pdf.scan --input

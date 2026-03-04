@@ -20,10 +20,16 @@ Los comandos del framework son módulos ejecutables con `python -m _pdf.<comando
   - `--clean`: borra output antes de compilar
   - `--materia` / `--search-dir`: ayudan a resolver assets cuando el input referencia PDFs/imagenes externas
 
+<<<<<<< HEAD
 ### `build_materia` (build por materia, ruta explícita)
 
 - Archivo: `build_materia.py`
 - Entrada: `--materia <PATH>` (ruta absoluta o relativa a la materia)
+=======
+### `build_materia` (build por materia)
+
+- Archivo: `build_materia.py`
+>>>>>>> a466de344d0bb9a968c160c1247e6dda6df08828
 - Fuente: materia completa (recursivo)
 - Destino:
   - `<Materia>/Resumenes/Practico/*.pdf`

@@ -2,6 +2,7 @@
 
 `scripts/` contiene wrappers operativos para el equipo (Windows/PowerShell).
 
+<<<<<<< HEAD
 ## Objetivo
 
 - Ejecutar el framework desde una ubicación central (`...\_pdf\`) sin copiarlo dentro de cada materia.
@@ -28,21 +29,39 @@ Uso:
 ```
 
 ## 2) build_all.ps1
+=======
+## 1) build_all.ps1
+>>>>>>> a466de344d0bb9a968c160c1247e6dda6df08828
 
 Archivo: `scripts/build_all.ps1`
 
 Contrato:
 
+<<<<<<< HEAD
 - Alias de `build_materia.ps1` (misma interfaz).
 - Se mantiene para compatibilidad de equipo.
+=======
+- Se ejecuta desde cualquier ubicación.
+- Cambia el working directory a `<Materia>/Scripts`.
+- Compila la materia actual con `python -m _pdf.build_materia <Materia>`.
+>>>>>>> a466de344d0bb9a968c160c1247e6dda6df08828
 
 Uso:
 
 ```powershell
+<<<<<<< HEAD
 .\_pdf\scripts\build_all.ps1 D:\ArqComp --check
 ```
 
 ## 3) clean.ps1
+=======
+./_pdf/scripts/build_all.ps1
+./_pdf/scripts/build_all.ps1 --check
+./_pdf/scripts/build_all.ps1 --area practico --only 00 01
+```
+
+## 2) clean.ps1
+>>>>>>> a466de344d0bb9a968c160c1247e6dda6df08828
 
 Archivo: `scripts/clean.ps1`
 
@@ -54,5 +73,9 @@ Contrato:
 Uso:
 
 ```powershell
+<<<<<<< HEAD
 .\_pdf\scripts\clean.ps1
+=======
+./_pdf/scripts/clean.ps1
+>>>>>>> a466de344d0bb9a968c160c1247e6dda6df08828
 ```
