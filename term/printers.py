@@ -14,7 +14,7 @@ def print_help(c: Console) -> None:
     c.print(f"  python -m _pdf.build {c.gray('[--clean] [--check] [--strict] [--search-dir DIR...]')}")
     c.print("")
     c.print(c.bold("BUILD MATERIA (materia → Resumenes)"))
-    c.print(f"  python -m _pdf.build_materia MATERIA {c.gray('[--area practico|taller|both] [--only 00 01 ...] [--check] [--strict]')}")
+    c.print(f"  python -m _pdf.build_materia --materia MATERIA {c.gray('[--area teorico|practico|taller|both|all] [--only 00 01 ...] [--check] [--strict]')}")
     c.print("")
     c.print(c.bold("SCAN / LINT (sin generar PDF)"))
     c.print(f"  python -m _pdf.scan --materia MATERIA {c.gray('[--strict] [--show-skipped]')}")

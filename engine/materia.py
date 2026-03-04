@@ -39,7 +39,7 @@ def _default_out_name(txt_path: Path) -> str:
 def discover_jobs(
     materia: Path,
     *,
-    area: str = "both",   # practico | taller | both
+    area: str = "all",   # practico | taller | teorico | both | all
     only_prefixes: Optional[Sequence[str]] = None,
     dest_root_name: str = "Resumenes",
 ) -> List[BuildJob]:
@@ -56,8 +56,14 @@ def discover_jobs(
             continue
         if area == "taller" and a != "Taller":
             continue
+        if area == "teorico" and a != "Teorico":
+            continue
+        # compat: "both" == practico+taller
         if area == "both" and a not in {"Practico", "Taller"}:
             continue
+        # "all" compila cualquier carpeta (salvo exclusiones del scan)
+        if area == "all":
+            pass
 
         if only_prefixes:
             # mantener compatibilidad con 00/01/etc: si alguna parte del path arranca con prefijo
@@ -69,7 +75,7 @@ def discover_jobs(
         out = attrs.get("out")
         out_name = str(out) if isinstance(out, str) and out else _default_out_name(f)
 
-        out_dir = dest_root / a if a in {"Practico", "Taller"} else dest_root
+        out_dir = dest_root / a if a in {"Practico", "Taller", "Teorico"} else dest_root
         out_dir.mkdir(parents=True, exist_ok=True)
 
         jobs.append(BuildJob(txt_path=f, area=a, out_dir=out_dir, out_name=out_name))
