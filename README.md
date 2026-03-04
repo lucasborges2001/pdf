@@ -1,15 +1,23 @@
 # _pdf — Framework de generación de PDFs (ReportLab)
 
-Framework Python para convertir documentos `.txt` en PDFs consistentes (TOC, bloques, imágenes, tipografías y metadatos), pensado para vivir dentro de una materia/proyecto con esta estructura:
+Framework Python para convertir documentos `.txt` en PDFs consistentes (TOC, bloques, imágenes, tipografías y metadatos).
 
+Este repo está pensado para estar **centralizado** (por ejemplo `D:\Scripts\_pdf\`) y compilar tanto:
+
+- `_pdf/input/*.txt` → `_pdf/output/*.pdf` (build simple)
+- `<Materia>/**` → `<Materia>/Resumenes/**` (build por materia)
+
+## Quickstart
+
+```bash
+python -m _pdf.help
+python -m _pdf.build --check
+python -m _pdf.build
+python -m _pdf.build_materia D:\ArqComp --check
+python -m _pdf.build_materia D:\ArqComp
 ```
-<Materia>/
-  Practico/
-  Taller/
-  Resumenes/
-  Scripts/
-    _pdf/   <-- este repo
-```
+
+Para más detalles ver `docs/USAGE.md`.
 
 > Nota: este framework está diseñado para ejecutarse desde `<Materia>/Scripts` (el padre de `_pdf`).
 
@@ -54,3 +62,36 @@ La especificación de formato está en `docs/FORMAT.md`.
 - `make -C _pdf help` (si tenés GNU Make)
 - Scripts PowerShell en `scripts/`.
 
+
+### Flags de salida (comunes)
+
+- `--quiet`
+- `--only-summary`
+- `--no-summary`
+- `-v` / `-vv`
+- `--no-color`
+- `--ascii`
+
+
+### Guardar salida de terminal
+
+Podés agregar `--log <archivo>` a cualquier comando para guardar el output en un archivo.
+
+
+## Tests
+
+Ejecutar suite mínima:
+
+```powershell
+python -m unittest discover -s _pdf/tests
+```
+
+
+## JSON (CI)
+
+Para scan/check:
+
+```powershell
+python -m _pdf.scan --materia D:\ArqComp --log-json D:\logs\scan.json
+python -m _pdf.build --check --log-json D:\logs\check.json
+```

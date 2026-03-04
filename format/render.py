@@ -10,9 +10,9 @@ from reportlab.platypus.tableofcontents import TableOfContents
 from reportlab.platypus.paragraph import Paragraph
 from reportlab.pdfgen import canvas as canv
 
-from .core import DocSpec, PdfTheme
-from .ctx import PdfCtx
-from .utils import exists, hex_color, safe_draw_image
+from ..runtime.core import DocSpec, PdfTheme
+from ..runtime.ctx import PdfCtx
+from ..runtime.utils import exists, hex_color, safe_draw_image
 from .txtfmt import sanitize_para, sanitize_plain
 
 Flowable = Any

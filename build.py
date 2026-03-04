@@ -1,326 +1,98 @@
 #!/usr/bin/env python3
-"""
-Scripts/_pdf/build.py
+"""_pdf/build.py
 
-Versión simple del builder:
-- Lee todos los .txt de: Scripts/_pdf/input/*.txt
-- Genera PDFs en:       Scripts/_pdf/output/*.pdf
+Build simple:
+- Lee _pdf/input/*.txt
+- Genera PDFs en _pdf/output/
 
-Soporta el mismo formato que build_all.py:
-- Header opcional: [DOC key="value" ...]
-- Directivas del txtfmt (TOC, headings, FIG, etc.)
-- Resolución de PDFs para [FIG] igual que build_all (Teorico/Practico/Taller/Materia)
+Opcional:
+- --check: valida formato (usa engine.scanlib) sin generar PDFs
+- --materia / --search-dir: para resolver assets de [FIG]/[IMG]
+
+Salida en terminal se centraliza en _pdf/term/.
 """
 
 from __future__ import annotations
 
 import argparse
-import os
-import re
-import shlex
+import json
+import shutil
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import List, Optional
 
-# --------------------------------------------------------------------------------------
-# Import bootstrap
-#
-# Este repo suele correrse en 2 modos:
-#   1) Como paquete (recomendado): desde el padre -> `python -m <pkg>.build`
-#   2) Desde dentro de la carpeta del paquete: `python -m build` (o `python build.py`)
-#
-# En el modo (2), las imports relativas (from .x import y) fallan porque no hay "parent package".
-# Para hacerlo robusto, detectamos ese caso y re-importamos vía el nombre del directorio.
-# --------------------------------------------------------------------------------------
-
-if __package__ in (None, ""):
-    import sys as _sys
-    from importlib import import_module as _import_module
-
-    _pkg_dir = Path(__file__).resolve().parent
-    _pkg_name = _pkg_dir.name
-    _parent = _pkg_dir.parent
-    if str(_parent) not in _sys.path:
-        _sys.path.insert(0, str(_parent))
-
-    _framework = _import_module(f"{_pkg_name}.framework")
-    _paths = _import_module(f"{_pkg_name}.paths")
-    _txtfmt = _import_module(f"{_pkg_name}.txtfmt")
-
-    DocSpec = _framework.DocSpec
-    PdfCtx = _framework.PdfCtx
-    PdfTheme = _framework.PdfTheme
-    build_pdf = _framework.build_pdf
-
-    find_materia_root = _paths.find_materia_root
-    txt_to_flowables = _txtfmt.txt_to_flowables
-else:
-    from .framework import DocSpec, PdfCtx, PdfTheme, build_pdf
-    from .paths import find_materia_root
-    from .txtfmt import txt_to_flowables
-
-Scalar = Union[str, bool, int]
-
-_DOC_RE = re.compile(r"^\[DOC(?P<body>.*)\]\s*$")
-
-_ALLOWED_DOC_KEYS = {
-    "out",
-    "title",
-    "subtitle",
-    "meta_line",
-    "include_title_block",
-    "include_toc",
-    "toc_title",
-    "toc_max_level",
-    "footer_left",
-    "footer_center",
-    "footer_right",
-    "footer_show_page",
-    "footer_link_to_toc",
-    "author",
-    "subject",
-    "keywords",
-    "system",
-    "contacto",
-}
+from .engine.compile import compile_txt
+from .engine.scanlib import scan_input
+from .term.flags import add_common_flags, console_from_args, verbosity_from_args, output_mode_from_args, show_summary_from_args
+from .term.printers import print_scan_report, print_build_summary
 
 
-def _parse_scalar(v: str) -> Scalar:
-    s = v.strip()
-    lo = s.lower()
-    if lo in {"true", "false"}:
-        return lo == "true"
-    if re.fullmatch(r"-?\d+", s):
-        try:
-            return int(s)
-        except Exception:
-            return s
-    # si viene con comillas, shlex ya las sacó; acá dejamos raw
-    return s
+def main(argv: Optional[List[str]] = None) -> None:
+    ap = argparse.ArgumentParser(prog="python -m _pdf.build", description="Compila _pdf/input/*.txt -> _pdf/output/*.pdf")
+    ap.add_argument("--clean", action="store_true", help="Borra output/ antes de compilar.")
+    ap.add_argument("--check", action="store_true", help="Solo valida formato y assets (no genera PDFs).")
+    ap.add_argument("--strict", action="store_true", help="En --check, cuenta WARN como error (exit code).")
+    ap.add_argument("--materia", type=str, default=None, help="Ruta de materia para ayudar a resolver assets.")
+    ap.add_argument("--search-dir", action="append", default=[], help="Directorio extra para buscar assets (repetible).")
 
+    add_common_flags(ap, include_limits=True)
+    args = ap.parse_args(argv)
 
-def _parse_doc_header(text: str) -> Tuple[Dict[str, Scalar], List[str], str]:
-    """
-    Igual que build_all.py:
-    - Busca la primera línea no vacía
-    - Si es [DOC ...], la parsea (shlex)
-    - Esa línea no se imprime en el PDF
-    """
-    lines = text.splitlines()
-    i = 0
-    while i < len(lines) and not lines[i].strip():
-        i += 1
-    if i >= len(lines):
-        return {}, [], text
+    c = console_from_args(args)
+    mode = output_mode_from_args(args)
+    show_summary = show_summary_from_args(args)
+    verbosity = verbosity_from_args(args)
 
-    m = _DOC_RE.match(lines[i].strip())
-    if not m:
-        return {}, [], text
+    pkg_root = Path(__file__).resolve().parent
+    input_dir = pkg_root / "input"
+    out_dir = pkg_root / "output"
+    out_dir.mkdir(exist_ok=True)
 
-    body = (m.group("body") or "").strip()
-    attrs: Dict[str, Scalar] = {}
-    unknown: List[str] = []
-
-    if body:
-        for tok in shlex.split(body):
-            if "=" not in tok:
-                continue
-            k, v = tok.split("=", 1)
-            k = k.strip()
-            attrs[k] = _parse_scalar(v)
-            if k not in _ALLOWED_DOC_KEYS:
-                unknown.append(k)
-
-    rest = "\n".join(lines[:i] + lines[i + 1 :])
-    return attrs, unknown, rest
-
-
-def _resolve_pdf_factory(*, materia: Path, txt_dir: Path):
-    """
-    Misma idea que build_all.py:
-    Permite que [FIG file="X.pdf"] encuentre PDFs en lugares típicos.
-    """
-    teo = materia / "Teorico"
-    pra = materia / "Practico"
-    tal = materia / "Taller"
-
-    def resolve_pdf(filename: str) -> Path:
-        candidates = [
-            txt_dir / filename,
-            teo / filename,
-            pra / filename,
-            tal / filename,
-            materia / filename,
-        ]
-        for p in candidates:
-            if p.is_file():
-                return p
-        return candidates[0]  # default si no existe (txtfmt decide warning)
-
-    return resolve_pdf
-
-
-
-def _resolve_img_factory(*, root: Path, input_dir: Path, txt_path: Path):
-    """Resuelve imágenes para [IMG ...].
-
-    Orden de búsqueda (prioridad):
-      1) input/<stem>/ (carpeta por documento)
-      2) input/<stem>/assets/
-      3) input/ (mismo directorio del .txt)
-      4) input/assets/
-      5) <root>/assets/
-    """
-    doc_dir = input_dir / txt_path.stem
-    doc_assets = doc_dir / "assets"
-    input_assets = input_dir / "assets"
-    root_assets = root / "assets"
-
-    def resolve_img(filename: str) -> Path:
-        p = Path(filename)
-        if p.is_absolute():
-            return p
-        candidates = [
-            doc_dir / filename,
-            doc_assets / filename,
-            txt_path.parent / filename,
-            input_assets / filename,
-            root_assets / filename,
-            root / filename,
-        ]
-        for c in candidates:
-            if c.is_file():
-                return c
-        return candidates[0]
-
-    return resolve_img
-
-def _default_out_pdf(*, output_dir: Path, txt_path: Path, attrs: Dict[str, Scalar]) -> Path:
-    """
-    - Si [DOC out="algo.pdf"] existe, lo respeta, PERO siempre bajo output_dir
-    - Si no, usa el nombre del txt con .pdf
-    """
-    v = attrs.get("out")
-    if isinstance(v, str) and v.strip():
-        name = Path(v.strip()).name  # por si ponen rutas, sanitizamos a basename
-        p = output_dir / name
-    else:
-        p = output_dir / txt_path.with_suffix(".pdf").name
-    return p if p.suffix.lower() == ".pdf" else p.with_suffix(".pdf")
-
-
-def build_one(
-    *,
-    txt_path: Path,
-    output_dir: Path,
-    strict: bool,
-    materia: Path,
-) -> Tuple[bool, Optional[str], Optional[Path]]:
-    try:
-        raw = txt_path.read_text(encoding="utf-8", errors="replace")
-        attrs, unknown, body = _parse_doc_header(raw)
-
-        if unknown:
-            msg = f"{txt_path.name}: claves DOC desconocidas: {', '.join(sorted(set(unknown)))}"
-            if strict:
-                return False, msg, None
-            print(f"[WARN] {msg}")
-
-        out_pdf = _default_out_pdf(output_dir=output_dir, txt_path=txt_path, attrs=attrs)
-
-        # Defaults razonables (no acoplados a Practico/Taller)
-        spec = DocSpec(
-            out_path=out_pdf,
-            title=str(attrs.get("title") or txt_path.stem),
-            subtitle=str(attrs["subtitle"]) if isinstance(attrs.get("subtitle"), str) else None,
-            meta_line=str(attrs["meta_line"]) if isinstance(attrs.get("meta_line"), str) else None,
-            include_title_block=bool(attrs.get("include_title_block", True)),
-            include_toc=bool(attrs.get("include_toc", True)),
-            toc_title=str(attrs.get("toc_title") or "Contenido"),
-            toc_max_level=int(attrs.get("toc_max_level", 3)) if isinstance(attrs.get("toc_max_level", 3), int) else 3,
-            footer_left=str(attrs.get("footer_left") or "Lucas Borges"),
-            footer_center=str(attrs.get("footer_center") or ""),
-            footer_right=str(attrs.get("footer_right") or ""),
-            footer_show_page=bool(attrs.get("footer_show_page", True)),
-            footer_link_to_toc=bool(attrs.get("footer_link_to_toc", True)),
-            author=str(attrs.get("author") or ""),
-            subject=str(attrs.get("subject") or ""),
-            keywords=str(attrs.get("keywords") or ""),
-            system=str(attrs.get("system") or ""),
-            contacto=str(attrs.get("contacto") or ""),
+    if args.check:
+        report = scan_input(pkg_root=pkg_root)
+        if args.log_json:
+            Path(args.log_json).write_text(json.dumps(report_to_dict(report), indent=2, ensure_ascii=False), encoding='utf-8')
+        print_scan_report(
+            c,
+            report,
+            mode=mode,
+            show_summary=show_summary,
+            verbosity=verbosity,
+            max_issues=args.max_issues,
+            show_skipped=args.show_skipped,
+            max_skipped=args.max_skipped,
+            title="CHECK INPUT",
         )
+        if args.strict:
+            raise SystemExit(1 if (report.errors or report.warns) else 0)
+        raise SystemExit(1 if report.errors else 0)
 
-        theme = PdfTheme()
+    if args.clean and out_dir.exists():
+        shutil.rmtree(out_dir)
+        out_dir.mkdir(exist_ok=True)
 
-        # Cache local para [FIG ...] (páginas exportadas)
-        cache_dir = output_dir / "_cache" / txt_path.stem
-        resolve_pdf = _resolve_pdf_factory(materia=materia, txt_dir=txt_path.parent)
-        resolve_img = _resolve_img_factory(root=txt_path.parent.parent.resolve(), input_dir=txt_path.parent, txt_path=txt_path)
-
-        def content(ctx: PdfCtx):
-            return txt_to_flowables(ctx, body, resolve_pdf=resolve_pdf, resolve_img=resolve_img, cache_dir=cache_dir)
-
-        build_pdf(spec, content, theme)
-        return True, None, out_pdf
-
-    except Exception as e:
-        return False, f"{type(e).__name__}: {e}", None
-
-
-def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--materia", type=str, default=None, help="Ruta a <Materia> (opcional). Si se omite, se intenta inferir desde CWD; si no, se usa input_dir.parent.")
-    ap.add_argument("--input-dir", type=str, default=None, help="Default: Scripts/_pdf/input")
-    ap.add_argument("--output-dir", type=str, default=None, help="Default: Scripts/_pdf/output")
-    ap.add_argument("--clean", action="store_true", help="Borra *.pdf en output antes de compilar")
-    ap.add_argument("--strict", action="store_true", help="Falla ante claves DOC desconocidas")
-    ap.add_argument("--no-warn-missing-assets", action="store_true")
-    args = ap.parse_args()
-
-    if not args.no_warn_missing_assets:
-        os.environ.setdefault("PDF_WARN_MISSING_ASSETS", "1")
-
-    root = Path(__file__).resolve().parent
-    input_dir = Path(args.input_dir).resolve() if args.input_dir else (root / "input")
-    output_dir = Path(args.output_dir).resolve() if args.output_dir else (root / "output")
-
-    if not input_dir.is_dir():
-        raise SystemExit(f"[ERROR] input dir not found: {input_dir}")
-
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    if args.clean:
-        for p in output_dir.glob("*.pdf"):
-            try:
-                p.unlink()
-            except Exception as e:
-                print(f"[WARN] no pude borrar '{p.name}': {type(e).__name__}: {e}")
+    materia = Path(args.materia).expanduser().resolve() if args.materia else None
+    search_dirs = [Path(p).expanduser().resolve() for p in (args.search_dir or [])]
 
     txts = sorted(input_dir.glob("*.txt"))
-    if not txts:
-        print("[WARN] no hay .txt en input/")
-        raise SystemExit(0)    # Materia es opcional: sólo se usa para ayudar a resolver PDFs en [FIG ...].
-    # En este repo (modo input/output) normalmente NO hay estructura <Materia>,
-    # así que por defecto usamos el root del proyecto (padre de input_dir).
-    if args.materia:
-        materia = Path(args.materia).expanduser().resolve()
-    else:
-        materia = input_dir.parent.resolve()
+    built = 0
+    ok = True
 
-
-
-    any_error = False
-    ok = 0
     for txt in txts:
-        okb, err, pdf = build_one(txt_path=txt, output_dir=output_dir, strict=args.strict, materia=materia)
-        if okb and pdf:
-            ok += 1
-            print(f"[OK] {txt.name} -> {pdf.name}")
-        else:
-            any_error = True
-            print(f"[ERROR] {txt.name}: {err}")
+        try:
+            out_pdf = out_dir / (txt.stem + ".pdf")
+            compile_txt(txt_path=txt, out_dir=out_dir, out_name=out_pdf.name, materia=materia, extra_search_dirs=search_dirs)
+            built += 1
+            if verbosity >= 2 and not args.quiet:
+                c.print(f"  {c.g.dot} {txt.name} {c.g.arrow} {out_pdf.name}")
+        except Exception as e:
+            ok = False
+            if not args.quiet:
+                c.print(c.red(f"{c.g.err} ERROR en {txt}: {e}"))
 
-    print(f"TOTAL: {ok}/{len(txts)} OK")
-    raise SystemExit(1 if any_error else 0)
+    if not args.quiet:
+        print_build_summary(c, ok=ok, built=built, out_dir=out_dir, mode=mode, show_summary=show_summary)
+
+    raise SystemExit(0 if ok else 1)
 
 
 if __name__ == "__main__":

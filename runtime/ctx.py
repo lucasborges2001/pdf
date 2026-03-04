@@ -14,7 +14,7 @@ from reportlab.platypus.flowables import Flowable as RLFlowable
 
 from .core import PdfTheme
 from .utils import hex_color
-from . import images as img_mod  # para ctx.fig / ctx.asset
+from ..format import images as img_mod  # para ctx.fig / ctx.asset
 
 
 Flowable = Any

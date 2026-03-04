@@ -12,7 +12,7 @@ from xml.sax.saxutils import escape as _xml_escape
 from reportlab.platypus import PageBreak, CondPageBreak
 from reportlab.platypus.paragraph import Paragraph
 
-from .ctx import PdfCtx
+from ..runtime.ctx import PdfCtx
 from .images import fig_pdf_page
 
 Flowable = Any
