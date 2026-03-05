@@ -222,7 +222,10 @@ def _inline_rl(text: str) -> str:
         raw = raw.replace(emoji, hold(html))
 
     t = _xml_escape(_normalize_unicode(raw))
-    t = _CODE_RE.sub(r'<font face="Courier">\1</font>', t)
+    def repl_code(m: re.Match[str]) -> str:
+        return hold(f'<font face="Courier">{m.group(1)}</font>')
+
+    t = _CODE_RE.sub(repl_code, t)
     t = _BOLD_RE.sub(r"<b>\1</b>", t)
     t = _ITALIC_RE.sub(r"<i>\1</i>", t)
 
@@ -420,7 +423,7 @@ def txt_to_flowables(
 
         # PageBreak explícito
         if _PB_RE.match(line):
-            story.append(PageBreak())
+            _maybe_pagebreak(story)
             i += 1
             continue
 
@@ -430,17 +433,17 @@ def txt_to_flowables(
             fn, page, cap, zoom = fig
             pdf_path = resolve_pdf(fn)
             caption = cap or f"Fuente: {fn}, pág. {page}"
-            _condbreak(story, _MIN_SPACE_BEFORE_FIG)
-            story.extend(
-                fig_pdf_page(
-                    ctx,
-                    pdf_path,
-                    page,
-                    caption=sanitize_para(caption),
-                    cache_dir=cache_dir,
-                    zoom=zoom or default_zoom,
-                )
+            flows = fig_pdf_page(
+                ctx,
+                pdf_path,
+                page,
+                caption=sanitize_para(caption),
+                cache_dir=cache_dir,
+                zoom=zoom or default_zoom,
             )
+            if flows:
+                _condbreak(story, _MIN_SPACE_BEFORE_FIG)
+                story.extend(flows)
             i += 1
             continue
 
@@ -450,8 +453,10 @@ def txt_to_flowables(
             fn, cap, max_w, max_h = imgm
             img_path = resolve_img(fn)  # type: ignore
             caption = sanitize_para(cap) if cap else None
-            _condbreak(story, _MIN_SPACE_BEFORE_FIG)
-            story.extend(ctx.fig(img_path, caption, max_w=max_w, max_h=max_h))
+            flows = ctx.fig(img_path, caption, max_w=max_w, max_h=max_h)
+            if flows:
+                _condbreak(story, _MIN_SPACE_BEFORE_FIG)
+                story.extend(flows)
             i += 1
             continue
 
@@ -671,6 +676,5 @@ def txt_to_flowables(
             i += 1
 
         story.append(ctx.p(" ".join(parts)))
-        i += 1
 
     return story

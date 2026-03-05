@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence
+from typing import Iterable, List, Optional, Sequence, Tuple
 
 from .scanlib import discover_txts
 from .docheader import parse_doc_header
@@ -12,7 +12,7 @@ from .docheader import parse_doc_header
 class BuildJob:
     txt_path: Path
     area: str  # "Practico" | "Taller" | "Teorico" | "Other"
-    out_dir: Path
+    out_dirs: Tuple[Path, ...]
     out_name: str  # pdf filename
 
 
@@ -75,9 +75,12 @@ def discover_jobs(
         out = attrs.get("out")
         out_name = str(out) if isinstance(out, str) and out else _default_out_name(f)
 
-        out_dir = dest_root / a if a in {"Practico", "Taller", "Teorico"} else dest_root
-        out_dir.mkdir(parents=True, exist_ok=True)
+        resumenes_dir = dest_root / a if a in {"Practico", "Taller", "Teorico"} else dest_root
+        resumenes_dir.mkdir(parents=True, exist_ok=True)
 
-        jobs.append(BuildJob(txt_path=f, area=a, out_dir=out_dir, out_name=out_name))
+        source_dir = f.parent
+        out_dirs = tuple(dict.fromkeys((resumenes_dir, source_dir)))
+
+        jobs.append(BuildJob(txt_path=f, area=a, out_dirs=out_dirs, out_name=out_name))
 
     return sorted(jobs, key=lambda j: str(j.txt_path))

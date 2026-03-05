@@ -241,6 +241,17 @@ def build_pdf(
 
     spec.out_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Evita páginas en blanco por PageBreak duplicados (p.ej. TOC + [PB])
+    deduped: List[Any] = []
+    prev_pb = False
+    for f in story:
+        is_pb = isinstance(f, PageBreak)
+        if is_pb and prev_pb:
+            continue
+        deduped.append(f)
+        prev_pb = is_pb
+    story = deduped
+
     if spec.include_toc:
         doc.multiBuild(story)
     else:

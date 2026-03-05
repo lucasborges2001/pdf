@@ -5,7 +5,7 @@ Framework Python para convertir documentos `.txt` en PDFs consistentes (TOC, blo
 Este repo está pensado para estar **centralizado** (por ejemplo `D:\scripts\_pdf\`) y compilar:
 
 - `_pdf/input/*.txt` → `_pdf/output/*.pdf` (**build simple**)
-- `<Materia>/**` → `<Materia>/Resumenes/**` (**build por materia**, pasando la ruta)
+- `<Materia>/**` → `<Materia>/Resumenes/**` + copia junto a cada `.txt`` (**build por materia**, pasando la ruta)
 
 Entrada recomendada para mantenimiento: `docs/INDEX.md`.
 
@@ -53,7 +53,7 @@ python -m _pdf.build --check
 python -m _pdf.build --check --strict
 ```
 
-### Build por materia (materia → Resumenes)
+### Build por materia (materia → Resumenes + copia local)
 
 ```powershell
 python -m _pdf.build_materia --materia D:\ArqComp            # default: --area all

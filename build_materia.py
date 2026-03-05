@@ -3,7 +3,7 @@
 
 Build por materia (repo centralizado):
 - Recorre una materia, descubre `.txt` candidatos (Teórico/Práctico/Taller/etc.) y compila.
-- Copia salida a: `<Materia>/Resumenes/<Carpeta>/` (por ejemplo Teorico/Practico/Taller).
+- Genera salida en `<Materia>/Resumenes/<Carpeta>/` y además deja una copia junto al `.txt` de origen.
 
 Interfaz de CLI:
 - Requiere `--materia <PATH>` (ruta absoluta o relativa a la materia).
@@ -15,6 +15,7 @@ Salida en terminal se centraliza en `_pdf/term/`.
 from __future__ import annotations
 
 import argparse
+import shutil
 import sys
 from pathlib import Path
 from typing import List, Optional, Sequence
@@ -46,7 +47,7 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     ap = argparse.ArgumentParser(
         prog="python -m _pdf.build_materia",
-        description="Compila una materia -> <Materia>/Resumenes/",
+        description="Compila una materia -> <Materia>/Resumenes/ y copia junto al .txt",
     )
 
     ap.add_argument(
@@ -99,16 +100,22 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     for job in jobs:
         try:
-            compile_txt(
+            primary_out = compile_txt(
                 txt_path=job.txt_path,
-                out_dir=job.out_dir,
+                out_dir=job.out_dirs[0],
                 out_name=job.out_name,
                 materia=materia,
                 extra_search_dirs=None,
             )
+
+            for extra_out_dir in job.out_dirs[1:]:
+                extra_out_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(primary_out, extra_out_dir / job.out_name)
+
             built += 1
             if verbosity >= 2 and not args.quiet:
-                c.print(f"  {c.g.dot} {job.txt_path.name} {c.g.arrow} {job.out_dir / job.out_name}")
+                rendered = ", ".join(str(out_dir / job.out_name) for out_dir in job.out_dirs)
+                c.print(f"  {c.g.dot} {job.txt_path.name} {c.g.arrow} {rendered}")
         except Exception as e:
             ok = False
             if not args.quiet:
@@ -117,6 +124,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     if not args.quiet:
         out_root = materia / "Resumenes"
         print_build_summary(c, ok=ok, built=built, out_dir=out_root, mode=mode, show_summary=show_summary)
+        if show_summary and mode != "quiet":
+            c.print(f"  {c.gray('mirror')} {c.g.arrow} carpetas origen de cada .txt")
 
     raise SystemExit(0 if ok else 1)
 

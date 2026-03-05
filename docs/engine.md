@@ -89,6 +89,7 @@ Archivo: `engine/materia.py`
 - Define el destino:
   - `<Materia>/Resumenes/Practico/`
   - `<Materia>/Resumenes/Taller/`
+  - además duplica cada PDF en la carpeta origen del `.txt`
 
 Regla de mantenimiento:
 

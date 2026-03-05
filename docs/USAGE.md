@@ -5,7 +5,7 @@
 Este repo está pensado para estar **centralizado** (por ejemplo `D:\Scripts\_pdf\`) y compilar:
 
 - **Build simple**: `_pdf/input/*.txt` → `_pdf/output/*.pdf`
-- **Build por materia**: `<Materia>/**` → `<Materia>/Resumenes/**`
+- **Build por materia**: `<Materia>/**` → `<Materia>/Resumenes/**` + copia junto a cada `.txt``
 - **Scan**: validación rápida del formato (sin generar PDFs)
 
 ---
@@ -25,7 +25,7 @@ python -m _pdf.build --check
 python -m _pdf.build --check --show-skipped
 ```
 
-### 3) Build por materia (materia → Resumenes)
+### 3) Build por materia (materia → Resumenes + copia local)
 ```bash
 python -m _pdf.build_materia --materia D:\ArqComp
 python -m _pdf.build_materia --materia D:\ArqComp --area practico
@@ -56,6 +56,8 @@ El scan/build por materia recorre recursivamente y busca `.txt` **candidatos** (
   Taller/
     ...
   Resumenes/          # generado
+  Practico/*.pdf      # copia local junto a cada .txt
+  Practico/*/*.pdf    # idem para subcarpetas
 ```
 
 **Nota:** `Resumenes/`, `output/`, `__pycache__/`, `.git/`, `.venv/` se excluyen del scan.
