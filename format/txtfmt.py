@@ -7,8 +7,6 @@ from reportlab.platypus import PageBreak
 
 from ..runtime.ctx import PdfCtx
 from .images import fig_pdf_page
-from .txtfmt_inline import inline_rl as _inline_rl
-from .txtfmt_inline import normalize_unicode as _normalize_unicode
 from .txtfmt_inline import sanitize_code_line, sanitize_para, sanitize_plain
 from .txtfmt_structure import (
     consume_procedural_steps,

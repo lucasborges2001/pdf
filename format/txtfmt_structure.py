@@ -7,7 +7,7 @@ from reportlab.platypus import CondPageBreak
 from reportlab.platypus.paragraph import Paragraph
 
 from ..runtime.ctx import PdfCtx
-from .txtfmt_inline import inline_rl, normalize_unicode, sanitize_para
+from .txtfmt_inline import _inline_rl, _normalize_unicode, sanitize_para
 from .txtfmt_syntax import (
     BLOCK_OPEN_RE,
     CALLOUT_OPEN_RE,
@@ -38,7 +38,7 @@ def is_dash_rule(line: str) -> bool:
 
 
 def slugify(s: str) -> str:
-    s = normalize_unicode(s).lower().strip()
+    s = _normalize_unicode(s).lower().strip()
     s = re.sub(r"[^\w\s.-]", "", s)
     s = re.sub(r"[\s.]+", "-", s)
     s = re.sub(r"-{2,}", "-", s).strip("-")
@@ -54,7 +54,7 @@ def unique_key(base: str, used: Dict[str, int]) -> str:
 
 def mk_heading(ctx: PdfCtx, text: str, level: int, key: str, *, in_callout: bool) -> Flowable:
     style = ctx.h2 if level <= 1 else ctx.h3
-    html = f'<a name="{key}"/>{inline_rl(text)}'
+    html = f'<a name="{key}"/>{_inline_rl(text)}'
     p = ctx.p(html, style)
     setattr(p, "_fbd_key", key)
     setattr(p, "_fbd_level", max(0, int(level) - 1))
