@@ -1,41 +1,66 @@
-# Materia/Scripts/_pdf/txtfmt.py
-
 from __future__ import annotations
 
-import re
-import unicodedata
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple, Any
+from typing import Any, Callable, Dict, List, Optional
 
-from xml.sax.saxutils import escape as _xml_escape
-
-from reportlab.platypus import PageBreak, CondPageBreak
-from reportlab.platypus.paragraph import Paragraph
+from reportlab.platypus import PageBreak
 
 from ..runtime.ctx import PdfCtx
 from .images import fig_pdf_page
+from .txtfmt_inline import inline_rl as _inline_rl
+from .txtfmt_inline import normalize_unicode as _normalize_unicode
+from .txtfmt_inline import sanitize_code_line, sanitize_para, sanitize_plain
+from .txtfmt_structure import (
+    consume_procedural_steps,
+    condbreak,
+    is_dash_rule,
+    is_eq_rule,
+    is_procedural_step_start,
+    mk_heading,
+    parse_pipe_table,
+    unique_key,
+)
+from .txtfmt_syntax import (
+    BLOCK_CLOSE_RE,
+    BLOCK_OPEN_RE,
+    CALLOUT_CLOSE_RE,
+    CALLOUT_OPEN_RE,
+    FENCE_CLOSE_RE,
+    FENCE_OPEN_RE,
+    HEADING_BLOCK_RE,
+    HEADING_DOT_RE,
+    ORDERED_LIST_RE,
+    PB_RE,
+    parse_fig_marker,
+    parse_img_marker,
+)
 
 Flowable = Any
 
 # ------------------------------
 # UX policy (paginado)
 # ------------------------------
-_TOP_LEVEL_STARTS_NEW_PAGE = True     # headings nivel 1 (secciones mayores)
-_EXERCISE_STARTS_NEW_PAGE = True      # headings que contienen "Ejercicio"
+_TOP_LEVEL_STARTS_NEW_PAGE = True
+_EXERCISE_STARTS_NEW_PAGE = True
 
-_MIN_SPACE_BEFORE_CALLOUT = 180       # puntos
-_MIN_SPACE_BEFORE_FIG = 260           # puntos
-_MIN_SPACE_BEFORE_CODE = 140          # puntos
+_MIN_SPACE_BEFORE_CALLOUT = 180
+_MIN_SPACE_BEFORE_FIG = 260
+_MIN_SPACE_BEFORE_CODE = 140
 
+
+# ------------------------------
+# Controller helpers
+# ------------------------------
 
 def _last_is_pagebreak(story: List[Flowable]) -> bool:
     return bool(story) and isinstance(story[-1], PageBreak)
 
 
+
 def _maybe_pagebreak(story: List[Flowable]) -> None:
-    # no agregar PB si es el inicio o si ya hay PB
     if story and not _last_is_pagebreak(story):
         story.append(PageBreak())
+
 
 
 def _needs_pagebreak_before_heading(level: int, title: str) -> bool:
@@ -47,338 +72,330 @@ def _needs_pagebreak_before_heading(level: int, title: str) -> bool:
     return False
 
 
-# ------------------------------
-# Marcadores
-# ------------------------------
 
-# [FIG file="..." page=... caption="..." zoom=2.0]
-_FIG_RE = re.compile(
-    r'^\[FIG\s+file="(?P<file>[^"]+)"\s+page=(?P<page>\d+)(?:\s+caption="(?P<caption>[^"]*)")?(?:\s+zoom=(?P<zoom>[\d.]+))?\s*\]\s*$'
-)
-
-# [IMG file="..." caption="..." max_w=... max_h=...]
-_IMG_RE = re.compile(
-    r'^\[IMG\s+file="(?P<file>[^"]+)"(?:\s+caption="(?P<caption>[^"]*)")?(?:\s+max_w=(?P<max_w>[\d.]+))?(?:\s+max_h=(?P<max_h>[\d.]+))?\s*\]\s*$'
-)
-
-# [PAGEBREAK] / [PB]
-_PB_RE = re.compile(r'^\[(?:PAGEBREAK|PB)\]\s*$')
-
-# [NOTE title="..."] ... [/NOTE]
-# Kinds: NOTE|WARN|DANGER|INFO|TIP|CHECK
-_CALLOUT_OPEN_RE = re.compile(
-    r'^\[(?P<kind>NOTE|WARN|DANGER|INFO|TIP|CHECK)(?:\s+title="(?P<title>[^"]*)")?\]\s*$'
-)
-_CALLOUT_CLOSE_RE = re.compile(r'^\[/(?P<kind>NOTE|WARN|DANGER|INFO|TIP|CHECK)\]\s*$')
-
-# :::def [title] ... :::  /  :::table ... :::
-_BLOCK_OPEN_RE = re.compile(r"^:::(?P<kind>[A-Za-z0-9_-]+)(?:\s+(?P<title>.+))?\s*$")
-_BLOCK_CLOSE_RE = re.compile(r"^:::\s*$")
-
-# ```lang ... ```
-_FENCE_OPEN_RE = re.compile(r'^\s*```(?P<lang>[A-Za-z0-9_+-]+)?\s*$')
-_FENCE_CLOSE_RE = re.compile(r'^\s*```\s*$')
-
-_HEADING_DOT_RE = re.compile(r"^(?P<num>\d+(?:\.\d+)*)\.\s+(?P<title>.+)$")
-_HEADING_BLOCK_RE = re.compile(r"^(?P<num>\d+(?:\.\d+)*)(?P<delim>[.)])\s+(?P<title>.+)$")
+def _append_explicit_pagebreak(story: List[Flowable]) -> None:
+    story.append(PageBreak())
 
 
-def parse_fig_marker(line: str) -> Optional[Tuple[str, int, Optional[str], float]]:
-    m = _FIG_RE.match(line.strip())
-    if not m:
+
+def _append_figure(
+    ctx: PdfCtx,
+    story: List[Flowable],
+    marker_line: str,
+    *,
+    resolve_pdf: Callable[[str], Path],
+    resolve_img: Optional[Callable[[str], Path]] = None,
+    cache_dir: Optional[Path],
+    default_zoom: float,
+) -> bool:
+    fig = parse_fig_marker(marker_line)
+    if not fig:
+        return False
+
+    fn, page, cap, zoom = fig
+    pdf_path = resolve_pdf(fn)
+    caption = cap or f"Fuente: {fn}, pág. {page}"
+    condbreak(story, _MIN_SPACE_BEFORE_FIG)
+    story.extend(
+        fig_pdf_page(
+            ctx,
+            pdf_path,
+            page,
+            caption=sanitize_para(caption),
+            cache_dir=cache_dir,
+            zoom=zoom or default_zoom,
+        )
+    )
+    return True
+
+
+
+def _append_block_construct(
+    ctx: PdfCtx,
+    story: List[Flowable],
+    lines: List[str],
+    start: int,
+    *,
+    parse_block: Callable[[List[str], bool], List[Flowable]],
+) -> Optional[int]:
+    line = lines[start].strip()
+    mb = BLOCK_OPEN_RE.match(line)
+    if not mb:
         return None
-    fn = m.group("file")
-    page = int(m.group("page"))
-    cap = m.group("caption")
-    zoom = float(m.group("zoom")) if m.group("zoom") else 2.0
-    return fn, page, cap, zoom
+
+    kind_raw = (mb.group("kind") or "").lower().strip()
+    title = (mb.group("title") or "").strip() or None
+
+    body_lines: List[str] = []
+    i = start + 1
+    while i < len(lines):
+        raw2 = lines[i].rstrip("\n")
+        if BLOCK_CLOSE_RE.match(raw2.strip()):
+            break
+        body_lines.append(raw2)
+        i += 1
+
+    if i < len(lines) and BLOCK_CLOSE_RE.match(lines[i].strip()):
+        i += 1
+
+    if kind_raw == "table":
+        rows, aligns = parse_pipe_table(body_lines)
+        story.append(ctx.table(rows, header=True, aligns=aligns))
+        story.append(ctx.sp(6))
+        return i
+
+    kind_map = {
+        "def": ("note", "Definición"),
+        "ej": ("info", "Ejemplo"),
+        "error": ("danger", "Error típico"),
+        "tip": ("note", "Tip"),
+        "warn": ("warn", "Atención"),
+        "info": ("info", "Info"),
+        "check": ("info", "Checklist"),
+    }
+    call_kind, default_title = kind_map.get(
+        kind_raw,
+        ("info", kind_raw.upper() if kind_raw else "Info"),
+    )
+    final_title = title or default_title
+    body_flow = parse_block(body_lines, True) if body_lines else [ctx.p("", ctx.base)]
+
+    condbreak(story, _MIN_SPACE_BEFORE_CALLOUT)
+    story.append(ctx.callout(call_kind, final_title, body_flow))
+    story.append(ctx.sp(10))
+    return i
 
 
-def parse_img_marker(line: str) -> Optional[Tuple[str, Optional[str], Optional[float], Optional[float]]]:
-    m = _IMG_RE.match(line.strip())
-    if not m:
+
+def _append_legacy_callout(
+    ctx: PdfCtx,
+    story: List[Flowable],
+    lines: List[str],
+    start: int,
+    *,
+    parse_block: Callable[[List[str], bool], List[Flowable]],
+) -> Optional[int]:
+    line = lines[start].strip()
+    mco = CALLOUT_OPEN_RE.match(line)
+    if not mco:
         return None
-    fn = m.group("file")
-    cap = m.group("caption")
-    max_w = float(m.group("max_w")) if m.group("max_w") else None
-    max_h = float(m.group("max_h")) if m.group("max_h") else None
-    return fn, cap, max_w, max_h
 
+    kind = mco.group("kind").lower()
+    title = mco.group("title") or None
 
-# ------------------------------
-# Sanitización + formato inline
-# ------------------------------
+    body_lines: List[str] = []
+    i = start + 1
+    while i < len(lines):
+        raw2 = lines[i].rstrip("\n")
+        line2 = raw2.strip()
+        mclose = CALLOUT_CLOSE_RE.match(line2)
+        if mclose and mclose.group("kind").lower() == kind:
+            break
+        body_lines.append(raw2)
+        i += 1
 
-_REPLACEMENTS = [
-    # Common symbols that standard PDF fonts may not render reliably
-    ("⊕", " XOR "),
-    ("✓", "OK"),
-    ("✗", "NO"),
-    ("↔", "<->"),
-    ("≈", "~="),
-    ("±", "+/-"),
-    ("’", "'"),
-    ("“", '"'),
-    ("”", '"'),
+    if i < len(lines) and CALLOUT_CLOSE_RE.match(lines[i].strip()):
+        i += 1
 
-    # Original mappings
-    ("→", "->"),
-    ("⇠", "->>"),
-    ("↣", "->>"),
-    ("↦", "|->"),
-    ("⇒", "=>"),
-    ("⇔", "<=>"),
-    ("∪", " U "),
-    ("∩", " ∩ "),
-    ("⊆", "⊆"),
-    ("⊇", "⊇"),
-    ("∈", "∈"),
-    ("∅", "∅"),
-    ("×", "×"),
-    ("·", "·"),
-    ("—", "-"),
-    ("–", "-"),
-    ("-", "-"),
-    (" ", " "),
-    ("⋈", "JOIN"),
-    ("⨝", "JOIN"),
-    ("▷◁", "JOIN"),
-    ("÷", "DIV"),
-]
-
-_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
-_CODE_RE = re.compile(r"`([^`]+)`")
-_ITALIC_RE = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)")
-
-_MD_LINK_RE = re.compile(r"\[([^\]]+)\]\((https?://[^\s)]+)\)")
-_RAW_URL_RE = re.compile(r"(?<![\"'=])(https?://[^\s<]+[^\s<.,;:!?)\]])")
-_COLOR_TAG_RE = re.compile(r"\[(?:color|c)=(#[0-9A-Fa-f]{6}|[A-Za-z][A-Za-z0-9_-]*)\](.+?)\[/\s*(?:color|c)\]", re.DOTALL)
-
-_INLINE_COLOR_MAP = {
-    "blue": "#2563EB",
-    "green": "#16A34A",
-    "purple": "#7C3AED",
-    "red": "#DC2626",
-    "orange": "#EA580C",
-    "amber": "#D97706",
-    "yellow": "#CA8A04",
-    "gray": "#4B5563",
-    "grey": "#4B5563",
-    "muted": "#4B5563",
-    "accent": "#1D4ED8",
-}
-
-_INLINE_EMOJI_HTML = {
-    "🟦": '<font color="#2563EB">&#9679;</font>',
-    "🟩": '<font color="#16A34A">&#9679;</font>',
-    "🟪": '<font color="#7C3AED">&#9679;</font>',
-    "🟥": '<font color="#DC2626">&#9679;</font>',
-    "🟧": '<font color="#EA580C">&#9679;</font>',
-    "🟨": '<font color="#D97706">&#9679;</font>',
-    "⚠️": '<font color="#D97706"><b>WARN</b></font>',
-    "⚠": '<font color="#D97706"><b>WARN</b></font>',
-    "ℹ️": '<font color="#2563EB"><b>INFO</b></font>',
-    "ℹ": '<font color="#2563EB"><b>INFO</b></font>',
-    "✅": '<font color="#16A34A"><b>OK</b></font>',
-    "❌": '<font color="#DC2626"><b>NO</b></font>',
-}
-
-
-def _normalize_unicode(s: str) -> str:
-    # Normalización safe para PDF core fonts (Helvetica/Courier).
-    out = unicodedata.normalize("NFKC", s or "")
-
-    # Sacar joiners/variation selectors que rompen reemplazos
-    out = out.replace("\u200d", "")   # ZWJ
-    out = out.replace("\ufe0f", "")   # VS16 (emoji)
-    out = out.replace("\ufe0e", "")   # VS15 (text)
-    out = out.replace("\u200b", "")   # ZWSP
-
-    # Reemplazos frase
-    out = out.replace("🟢 OK", "OK")
-    out = out.replace("🟡 WARN", "WARN")
-    out = out.replace("🔴 CRIT", "CRIT")
-
-    for a, b in _REPLACEMENTS:
-        out = out.replace(a, b)
-
-    # Fallback: removemos emojis residuales.
-    out = re.sub(r"[\U0001F300-\U0001FAFF\U00002600-\U000027BF]", "", out)
-    return out
+    body_flow = parse_block(body_lines, True) if body_lines else [ctx.p("", ctx.base)]
+    kmap = {
+        "note": "note",
+        "tip": "note",
+        "warn": "warn",
+        "danger": "danger",
+        "info": "info",
+        "check": "info",
+    }
+    condbreak(story, _MIN_SPACE_BEFORE_CALLOUT)
+    story.append(ctx.callout(kmap.get(kind, "info"), title, body_flow))
+    story.append(ctx.sp(10))
+    return i
 
 
 
-def _inline_rl(text: str) -> str:
-    raw = text or ""
-    token_map: Dict[str, str] = {}
-
-    def hold(html: str) -> str:
-        key = f"@@RL{len(token_map)}@@"
-        token_map[key] = html
-        return key
-
-    # Preservar emojis/marcadores visuales como HTML inline antes de normalizar
-    for emoji, html in _INLINE_EMOJI_HTML.items():
-        raw = raw.replace(emoji, hold(html))
-
-    t = _xml_escape(_normalize_unicode(raw))
-    def repl_code(m: re.Match[str]) -> str:
-        return hold(f'<font face="Courier">{m.group(1)}</font>')
-
-    t = _CODE_RE.sub(repl_code, t)
-    t = _BOLD_RE.sub(r"<b>\1</b>", t)
-    t = _ITALIC_RE.sub(r"<i>\1</i>", t)
-
-    def repl_color(m: re.Match[str]) -> str:
-        color_key = (m.group(1) or "").strip()
-        body = m.group(2) or ""
-        color = _INLINE_COLOR_MAP.get(color_key.lower(), color_key)
-        if not re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
-            return m.group(0)
-        return f'<font color="{color}">{body}</font>'
-
-    t = _COLOR_TAG_RE.sub(repl_color, t)
-
-    def repl_md_link(m: re.Match[str]) -> str:
-        label = m.group(1) or ""
-        url = (m.group(2) or "").strip()
-        return hold(f'<link href="{url}" color="#1D4ED8"><u>{label}</u></link>')
-
-    def repl_raw_url(m: re.Match[str]) -> str:
-        url = (m.group(1) or "").strip()
-        return hold(f'<link href="{url}" color="#1D4ED8"><u>{url}</u></link>')
-
-    t = _MD_LINK_RE.sub(repl_md_link, t)
-    t = _RAW_URL_RE.sub(repl_raw_url, t)
-
-    for key, html in token_map.items():
-        t = t.replace(key, html)
-    return t
-
-
-def sanitize_para(line: str) -> str:
-    t = _inline_rl(line)
-    t = re.sub(r"\s+", " ", t).strip()
-    return t
-
-
-def sanitize_code_line(line: str) -> str:
-    t = _xml_escape(_normalize_unicode(line.rstrip("\n").replace("\t", "    ")))
-    return t.replace(" ", "&nbsp;")
-
-
-def sanitize_plain(text: str) -> str:
-    """Sanitiza para strings planas (footer, etc.), sin XML escape."""
-    t = _normalize_unicode(text or "")
-    t = re.sub(r"\s+", " ", t).strip()
-    return t
-
-
-
-# ------------------------------
-# Parsing estructura
-# ------------------------------
-
-def _is_rule(line: str, ch: str, min_len: int) -> bool:
-    s = line.strip()
-    return len(s) >= min_len and set(s) == {ch}
-
-
-def _is_eq_rule(line: str) -> bool:
-    return _is_rule(line, "=", 10)
-
-
-def _is_dash_rule(line: str) -> bool:
-    return _is_rule(line, "-", 5)
-
-
-def _slugify(s: str) -> str:
-    s = _normalize_unicode(s).lower().strip()
-    s = re.sub(r"[^\w\s.-]", "", s)
-    s = re.sub(r"[\s.]+", "-", s)
-    s = re.sub(r"-{2,}", "-", s).strip("-")
-    return s or "sec"
-
-
-def _unique_key(base: str, used: Dict[str, int]) -> str:
-    k = _slugify(base)
-    n = used.get(k, 0)
-    used[k] = n + 1
-    return k if n == 0 else f"{k}-{n+1}"
-
-
-def _mk_heading(ctx: PdfCtx, text: str, level: int, key: str, *, in_callout: bool) -> Flowable:
-    # nivel 1 -> H2; nivel >=2 -> H3 (H1 lo maneja el title block del PDF)
-    style = ctx.h2 if level <= 1 else ctx.h3
-    html = f'<a name="{key}"/>{_inline_rl(text)}'
-    p = ctx.p(html, style)
-    setattr(p, "_fbd_key", key)
-    # TOC/outline esperan niveles 0..; mapeamos 1->0, 2->1, ...
-    setattr(p, "_fbd_level", max(0, int(level) - 1))
-    setattr(p, "_fbd_is_heading", True)
-    if in_callout:
-        setattr(p, "_fbd_skip_toc", True)
-        setattr(p, "_fbd_skip_outline", True)
-    return p
-
-
-def _condbreak(story: List[Flowable], min_space: int) -> None:
-    """Si el flowable anterior es heading, movemos el CondPageBreak antes del heading."""
-    if story and isinstance(story[-1], Paragraph) and bool(getattr(story[-1], "_fbd_is_heading", False)):
-        h = story.pop()
-        story.append(CondPageBreak(min_space))
-        story.append(h)
-    else:
-        story.append(CondPageBreak(min_space))
-
-
-
-_PIPE_SEP_CELL_RE = re.compile(r"^:?-{3,}:?$")
-
-
-def _pipe_align_from_sep(cell: str) -> Optional[str]:
-    c = cell.strip()
-    if not _PIPE_SEP_CELL_RE.match(c):
+def _append_eq_block_heading(
+    ctx: PdfCtx,
+    story: List[Flowable],
+    lines: List[str],
+    start: int,
+    *,
+    used_keys: Dict[str, int],
+    in_callout: bool,
+) -> Optional[int]:
+    line = lines[start].strip()
+    if not is_eq_rule(line):
         return None
-    left = c.startswith(":")
-    right = c.endswith(":")
-    if left and right:
-        return "CENTER"
-    if right:
-        return "RIGHT"
-    if left:
-        return "LEFT"
-    return None
+
+    if start + 2 < len(lines) and lines[start + 2].strip() and is_eq_rule(lines[start + 2]):
+        title_line = lines[start + 1].strip()
+        mblk = HEADING_BLOCK_RE.match(title_line)
+        if mblk:
+            num = mblk.group("num")
+            delim = mblk.group("delim")
+            full = f"{num}{delim} {mblk.group('title')}"
+            lvl = 1 + num.count(".")
+            key = unique_key(f"{num}-{mblk.group('title')}", used_keys)
+        else:
+            full = title_line
+            lvl = 1
+            key = unique_key(title_line, used_keys)
+
+        if (not in_callout) and _needs_pagebreak_before_heading(lvl, full):
+            _maybe_pagebreak(story)
+        story.append(mk_heading(ctx, full, lvl, key, in_callout=in_callout))
+        return start + 3
+
+    story.append(ctx.hr(space_before=6, space_after=8))
+    return start + 1
 
 
-def _parse_pipe_table(body_lines: List[str]) -> Tuple[List[List[str]], Optional[List[Optional[str]]]]:
-    raw_rows: List[List[str]] = []
 
-    for ln in body_lines:
-        s = ln.strip()
-        if not s:
-            continue
-        if not s.startswith("|"):
-            continue
-        cells = [c.strip() for c in s.strip().strip("|").split("|")]
-        raw_rows.append(cells)
+def _append_dot_heading(
+    ctx: PdfCtx,
+    story: List[Flowable],
+    line: str,
+    *,
+    used_keys: Dict[str, int],
+    in_callout: bool,
+) -> bool:
+    mh = HEADING_DOT_RE.match(line)
+    if not mh:
+        return False
 
-    if not raw_rows:
-        return [[""]], None
+    num = mh.group("num")
+    full = f"{num}. {mh.group('title')}"
+    lvl = 1 + num.count(".")
+    key = unique_key(f"{num}-{mh.group('title')}", used_keys)
+    if (not in_callout) and _needs_pagebreak_before_heading(lvl, full):
+        _maybe_pagebreak(story)
+    story.append(mk_heading(ctx, full, lvl, key, in_callout=in_callout))
+    return True
 
-    aligns: Optional[List[Optional[str]]] = None
-    if len(raw_rows) >= 2 and all(_PIPE_SEP_CELL_RE.match(c.strip()) for c in raw_rows[1]):
-        aligns = [_pipe_align_from_sep(c) for c in raw_rows[1]]
-        raw_rows.pop(1)
 
-    rows = [[sanitize_para(c) for c in r] for r in raw_rows]
-    if aligns is not None:
-        # normalizar tamaño a ncols (por si el separador no coincide perfecto)
-        ncols = max(len(r) for r in rows) if rows else len(aligns)
-        aligns = (list(aligns) + [None] * max(0, ncols - len(aligns)))[:ncols]
 
-    return rows, aligns
+def _append_code_fence(ctx: PdfCtx, story: List[Flowable], lines: List[str], start: int) -> Optional[int]:
+    raw = lines[start].rstrip("\n")
+    mf = FENCE_OPEN_RE.match(raw)
+    if not mf:
+        return None
 
+    lang = (mf.group("lang") or "").strip()
+    block: List[str] = []
+    i = start + 1
+    while i < len(lines) and not FENCE_CLOSE_RE.match(lines[i]):
+        block.append(sanitize_code_line(lines[i]))
+        i += 1
+    if i < len(lines) and FENCE_CLOSE_RE.match(lines[i]):
+        i += 1
+
+    title = f"Código{f' ({lang})' if lang else ''}"
+    condbreak(story, _MIN_SPACE_BEFORE_CODE)
+    story.append(ctx.codeblock(block, title=title))
+    return i
+
+
+
+def _append_unordered_list(ctx: PdfCtx, story: List[Flowable], lines: List[str], start: int) -> Optional[int]:
+    raw = lines[start].rstrip("\n")
+    if not raw.lstrip().startswith(("- ", "* ", "• ")):
+        return None
+
+    items: List[str] = []
+    i = start
+    while i < len(lines):
+        r2 = lines[i].rstrip("\n")
+        s2 = r2.lstrip()
+        if not s2.startswith(("- ", "* ", "• ")):
+            break
+        items.append(sanitize_para(s2[2:]))
+        i += 1
+    story.append(ctx.ul(items))
+    return i
+
+
+
+def _append_ordered_list(ctx: PdfCtx, story: List[Flowable], lines: List[str], start: int) -> Optional[int]:
+    line = lines[start].strip()
+    if not ORDERED_LIST_RE.match(line):
+        return None
+
+    items: List[str] = []
+    i = start
+    while i < len(lines):
+        mm = ORDERED_LIST_RE.match(lines[i].strip())
+        if not mm:
+            break
+        item_text = lines[i].strip()[mm.end():]
+        items.append(sanitize_para(item_text))
+        i += 1
+    story.append(ctx.ol(items))
+    return i
+
+
+
+def _append_indented_code(ctx: PdfCtx, story: List[Flowable], lines: List[str], start: int) -> Optional[int]:
+    raw = lines[start].rstrip("\n")
+    if not (raw.startswith("    ") or raw.startswith("\t")):
+        return None
+
+    block: List[str] = []
+    i = start
+    while i < len(lines):
+        r2 = lines[i].rstrip("\n")
+        if not (r2.startswith("    ") or r2.startswith("\t")):
+            break
+        block.append(sanitize_code_line(r2[4:] if r2.startswith("    ") else r2[1:]))
+        i += 1
+
+    condbreak(story, _MIN_SPACE_BEFORE_CODE)
+    story.append(ctx.codeblock(block, title="Procedimiento"))
+    return i
+
+
+
+def _paragraph_should_stop(peek_raw: str) -> bool:
+    peek = peek_raw.strip()
+    if not peek:
+        return True
+    if PB_RE.match(peek):
+        return True
+    if parse_fig_marker(peek) or parse_img_marker(peek):
+        return True
+    if BLOCK_OPEN_RE.match(peek) or CALLOUT_OPEN_RE.match(peek):
+        return True
+    if is_eq_rule(peek) or is_dash_rule(peek):
+        return True
+    if HEADING_DOT_RE.match(peek):
+        return True
+    if FENCE_OPEN_RE.match(peek_raw):
+        return True
+    if peek_raw.lstrip().startswith(("- ", "* ", "• ")):
+        return True
+    if ORDERED_LIST_RE.match(peek):
+        return True
+    if peek_raw.startswith("    ") or peek_raw.startswith("\t"):
+        return True
+    return False
+
+
+
+def _append_paragraph(ctx: PdfCtx, story: List[Flowable], lines: List[str], start: int) -> int:
+    first = lines[start].rstrip("\n").strip()
+    parts: List[str] = [sanitize_para(first)]
+    i = start + 1
+    while i < len(lines):
+        peek_raw = lines[i].rstrip("\n")
+        if _paragraph_should_stop(peek_raw):
+            break
+        parts.append(sanitize_para(peek_raw.strip()))
+        i += 1
+    story.append(ctx.p(" ".join(parts)))
+    return i
+
+
+# ------------------------------
+# Public API / controller
+# ------------------------------
 
 def txt_to_flowables(
     ctx: PdfCtx,
@@ -395,12 +412,7 @@ def txt_to_flowables(
     story: List[Flowable] = []
     used_keys: Dict[str, int] = _used_keys if _used_keys is not None else {}
 
-    if resolve_img is None:
-        def resolve_img(filename: str) -> Path:  # type: ignore
-            return Path(filename)
-
-    def parse_block(block_lines: List[str], *, in_callout: bool = False) -> List[Flowable]:
-        # IMPORTANTE: compartimos used_keys para evitar anchors duplicados en sub-bloques
+    def parse_block(block_lines: List[str], in_callout: bool = False) -> List[Flowable]:
         return txt_to_flowables(
             ctx,
             "\n".join(block_lines),
@@ -421,260 +433,87 @@ def txt_to_flowables(
             i += 1
             continue
 
-        # PageBreak explícito
-        if _PB_RE.match(line):
-            _maybe_pagebreak(story)
+        if PB_RE.match(line):
+            _append_explicit_pagebreak(story)
             i += 1
             continue
 
-        # FIG marker
-        fig = parse_fig_marker(line)
-        if fig:
-            fn, page, cap, zoom = fig
-            pdf_path = resolve_pdf(fn)
-            caption = cap or f"Fuente: {fn}, pág. {page}"
-            flows = fig_pdf_page(
-                ctx,
-                pdf_path,
-                page,
-                caption=sanitize_para(caption),
-                cache_dir=cache_dir,
-                zoom=zoom or default_zoom,
-            )
-            if flows:
-                _condbreak(story, _MIN_SPACE_BEFORE_FIG)
-                story.extend(flows)
+        if _append_figure(
+            ctx,
+            story,
+            line,
+            resolve_pdf=resolve_pdf,
+            resolve_img=resolve_img,
+            cache_dir=cache_dir,
+            default_zoom=default_zoom,
+        ):
             i += 1
             continue
 
-        # IMG marker
-        imgm = parse_img_marker(line)
-        if imgm:
-            fn, cap, max_w, max_h = imgm
-            img_path = resolve_img(fn)  # type: ignore
-            caption = sanitize_para(cap) if cap else None
-            flows = ctx.fig(img_path, caption, max_w=max_w, max_h=max_h)
-            if flows:
-                _condbreak(story, _MIN_SPACE_BEFORE_FIG)
-                story.extend(flows)
-            i += 1
+        next_i = _append_block_construct(ctx, story, lines, i, parse_block=parse_block)
+        if next_i is not None:
+            i = next_i
             continue
 
-        # ::: blocks (callouts y tablas)
-        mb = _BLOCK_OPEN_RE.match(line)
-        if mb:
-            kind_raw = (mb.group("kind") or "").lower().strip()
-            title = (mb.group("title") or "").strip() or None
-
-            body_lines: List[str] = []
-            i += 1
-            while i < len(lines):
-                raw2 = lines[i].rstrip("\n")
-                if _BLOCK_CLOSE_RE.match(raw2.strip()):
-                    break
-                body_lines.append(raw2)
-                i += 1
-
-            # consume cierre si estaba
-            if i < len(lines) and _BLOCK_CLOSE_RE.match(lines[i].strip()):
-                i += 1
-
-            # tabla
-            if kind_raw == "table":
-                rows, aligns = _parse_pipe_table(body_lines)
-                story.append(ctx.table(rows, header=True, aligns=aligns))
-                story.append(ctx.sp(6))
-                continue
-
-            # callout sugar
-            kind_map = {
-                "def": ("note", "Definición"),
-                "ej": ("info", "Ejemplo"),
-                "error": ("danger", "Error típico"),
-                "tip": ("note", "Tip"),
-                "warn": ("warn", "Atención"),
-                "info": ("info", "Info"),
-                "check": ("info", "Checklist"),
-            }
-            call_kind, default_title = kind_map.get(
-                kind_raw,
-                ("info", kind_raw.upper() if kind_raw else "Info"),
-            )
-            final_title = title or default_title
-            body_flow = parse_block(body_lines, in_callout=True) if body_lines else [ctx.p("", ctx.base)]
-
-            _condbreak(story, _MIN_SPACE_BEFORE_CALLOUT)
-            story.append(ctx.callout(call_kind, final_title, body_flow))
-            story.append(ctx.sp(10))
+        next_i = _append_legacy_callout(ctx, story, lines, i, parse_block=parse_block)
+        if next_i is not None:
+            i = next_i
             continue
 
-        # Callout block (legacy)
-        mco = _CALLOUT_OPEN_RE.match(line)
-        if mco:
-            kind = mco.group("kind").lower()
-            title = mco.group("title") or None
-
-            body_lines2: List[str] = []
-            i += 1
-            while i < len(lines):
-                raw2 = lines[i].rstrip("\n")
-                line2 = raw2.strip()
-                mclose = _CALLOUT_CLOSE_RE.match(line2)
-                if mclose and mclose.group("kind").lower() == kind:
-                    break
-                body_lines2.append(raw2)
-                i += 1
-
-            # consume cierre si estaba
-            if i < len(lines) and _CALLOUT_CLOSE_RE.match(lines[i].strip()):
-                i += 1
-
-            body_flow = parse_block(body_lines2, in_callout=True) if body_lines2 else [ctx.p("", ctx.base)]
-            kmap = {
-                "note": "note",
-                "tip": "note",
-                "warn": "warn",
-                "danger": "danger",
-                "info": "info",
-                "check": "info",
-            }
-            _condbreak(story, _MIN_SPACE_BEFORE_CALLOUT)
-            story.append(ctx.callout(kmap.get(kind, "info"), title, body_flow))
-            story.append(ctx.sp(10))
+        next_i = _append_eq_block_heading(
+            ctx,
+            story,
+            lines,
+            i,
+            used_keys=used_keys,
+            in_callout=_in_callout,
+        )
+        if next_i is not None:
+            i = next_i
             continue
 
-        # ==== heading block
-        if _is_eq_rule(line):
-            if i + 2 < len(lines) and lines[i + 2].strip() and _is_eq_rule(lines[i + 2]):
-                title_line = lines[i + 1].strip()
-                mblk = _HEADING_BLOCK_RE.match(title_line)
-                if mblk:
-                    num = mblk.group("num")
-                    delim = mblk.group("delim")
-                    full = f"{num}{delim} {mblk.group('title')}"
-                    lvl = 1 + num.count(".")
-                    key = _unique_key(f"{num}-{mblk.group('title')}", used_keys)
-                    if (not _in_callout) and _needs_pagebreak_before_heading(lvl, full):
-                        _maybe_pagebreak(story)
-                    story.append(_mk_heading(ctx, full, lvl, key, in_callout=_in_callout))
-                else:
-                    lvl = 1
-                    key = _unique_key(title_line, used_keys)
-                    if (not _in_callout) and _needs_pagebreak_before_heading(lvl, title_line):
-                        _maybe_pagebreak(story)
-                    story.append(_mk_heading(ctx, title_line, lvl, key, in_callout=_in_callout))
-                i += 3
-                continue
-
+        if is_dash_rule(line):
             story.append(ctx.hr(space_before=6, space_after=8))
             i += 1
             continue
 
-        # ---- hr
-        if _is_dash_rule(line):
-            story.append(ctx.hr(space_before=6, space_after=8))
+        if is_procedural_step_start(lines, i):
+            flows, i = consume_procedural_steps(ctx, lines, i)
+            story.extend(flows)
+            continue
+
+        if _append_dot_heading(ctx, story, line, used_keys=used_keys, in_callout=_in_callout):
             i += 1
             continue
 
-        # 1. / 1.2.
-        mh = _HEADING_DOT_RE.match(line)
-        if mh:
-            num = mh.group("num")
-            full = f"{num}. {mh.group('title')}"
-            lvl = 1 + num.count(".")
-            key = _unique_key(f"{num}-{mh.group('title')}", used_keys)
-            if (not _in_callout) and _needs_pagebreak_before_heading(lvl, full):
-                _maybe_pagebreak(story)
-            story.append(_mk_heading(ctx, full, lvl, key, in_callout=_in_callout))
-            i += 1
+        next_i = _append_code_fence(ctx, story, lines, i)
+        if next_i is not None:
+            i = next_i
             continue
 
-        # fenced code
-        mf = _FENCE_OPEN_RE.match(raw)
-        if mf:
-            lang = (mf.group("lang") or "").strip()
-            block: List[str] = []
-            i += 1
-            while i < len(lines) and not _FENCE_CLOSE_RE.match(lines[i]):
-                block.append(sanitize_code_line(lines[i]))
-                i += 1
-            if i < len(lines) and _FENCE_CLOSE_RE.match(lines[i]):
-                i += 1
-            title = f"Código{f' ({lang})' if lang else ''}"
-            _condbreak(story, _MIN_SPACE_BEFORE_CODE)
-            story.append(ctx.codeblock(block, title=title))
+        next_i = _append_unordered_list(ctx, story, lines, i)
+        if next_i is not None:
+            i = next_i
             continue
 
-        # UL
-        if raw.lstrip().startswith(("- ", "* ", "• ")):
-            items: List[str] = []
-            while i < len(lines):
-                r2 = lines[i].rstrip("\n")
-                s2 = r2.lstrip()
-                if not s2.startswith(("- ", "* ", "• ")):
-                    break
-                items.append(sanitize_para(s2[2:]))
-                i += 1
-            story.append(ctx.ul(items))
+        next_i = _append_ordered_list(ctx, story, lines, i)
+        if next_i is not None:
+            i = next_i
             continue
 
-        # OL
-        if re.match(r"^\d+[.)]\s+", line):
-            items2: List[str] = []
-            while i < len(lines):
-                mm = re.match(r"^\d+[.)]\s+(.*)$", lines[i].strip())
-                if not mm:
-                    break
-                items2.append(sanitize_para(mm.group(1)))
-                i += 1
-            story.append(ctx.ol(items2))
+        next_i = _append_indented_code(ctx, story, lines, i)
+        if next_i is not None:
+            i = next_i
             continue
 
-        # indented code
-        if raw.startswith("    ") or raw.startswith("\t"):
-            block2: List[str] = []
-            while i < len(lines):
-                r2 = lines[i].rstrip("\n")
-                if not (r2.startswith("    ") or r2.startswith("\t")):
-                    break
-                r2 = r2[4:] if r2.startswith("    ") else r2[1:]
-                block2.append(sanitize_code_line(r2))
-                i += 1
-            _condbreak(story, _MIN_SPACE_BEFORE_CODE)
-            story.append(ctx.codeblock(block2, title="Procedimiento"))
-            continue
-
-        # paragraph (acumula)
-        parts: List[str] = [sanitize_para(line)]
-        i += 1
-        while i < len(lines):
-            peek_raw = lines[i].rstrip("\n")
-            peek = peek_raw.strip()
-            if not peek:
-                break
-            if _PB_RE.match(peek):
-                break
-            if parse_fig_marker(peek):
-                break
-            if _BLOCK_OPEN_RE.match(peek):
-                break
-            if _CALLOUT_OPEN_RE.match(peek):
-                break
-            if _is_eq_rule(peek) or _is_dash_rule(peek):
-                break
-            if _HEADING_DOT_RE.match(peek):
-                break
-            if _FENCE_OPEN_RE.match(peek_raw):
-                break
-            if peek_raw.lstrip().startswith(("- ", "* ", "• ")):
-                break
-            if re.match(r"^\d+[.)]\s+", peek):
-                break
-            if peek_raw.startswith("    ") or peek_raw.startswith("\t"):
-                break
-            parts.append(sanitize_para(peek))
-            i += 1
-
-        story.append(ctx.p(" ".join(parts)))
+        i = _append_paragraph(ctx, story, lines, i)
 
     return story
+
+
+__all__ = [
+    "sanitize_para",
+    "sanitize_plain",
+    "sanitize_code_line",
+    "txt_to_flowables",
+]
