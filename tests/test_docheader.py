@@ -1,5 +1,9 @@
 import unittest
-from _pdf.engine.docheader import parse_doc_header
+
+import tests._path  # noqa: F401
+
+from _pdf.parser.header import parse_doc_header, parse_doc_header_result
+
 
 class TestDocHeader(unittest.TestCase):
     def test_parse_simple(self):
@@ -14,15 +18,26 @@ class TestDocHeader(unittest.TestCase):
 
     def test_unknown_keys_warn(self):
         text = '[DOC foo="bar" title="X"]\n'
-        attrs, unknown, rest, err = parse_doc_header(text)
+        attrs, unknown, _rest, err = parse_doc_header(text)
         self.assertIsNone(err)
         self.assertIn("foo", unknown)
         self.assertEqual(attrs["foo"], "bar")
 
     def test_bad_shlex(self):
         text = '[DOC title="unterminated]\n'
-        attrs, unknown, rest, err = parse_doc_header(text)
+        _attrs, _unknown, _rest, err = parse_doc_header(text)
         self.assertIsNotNone(err)
+
+    def test_invalid_header_without_closing_bracket(self):
+        result = parse_doc_header_result('[DOC title="Hola"\nBody')
+        self.assertTrue(result.has_header)
+        self.assertIsNotNone(result.error)
+
+    def test_missing_title_is_detectable(self):
+        result = parse_doc_header_result('[DOC include_toc=true]\nBody')
+        self.assertTrue(result.has_header)
+        self.assertNotIn("title", result.attrs)
+
 
 if __name__ == "__main__":
     unittest.main()

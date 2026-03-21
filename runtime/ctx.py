@@ -1,11 +1,8 @@
-# Materia/Scripts/_pdf/ctx.py
-
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union, cast
-
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.platypus import (
     Paragraph, Spacer, ListFlowable, ListItem, KeepTogether,
     Table, TableStyle
@@ -13,8 +10,9 @@ from reportlab.platypus import (
 from reportlab.platypus.flowables import Flowable as RLFlowable
 
 from .core import PdfTheme
+from .styles import build_styles
 from .utils import hex_color
-from ..format import images as img_mod  # para ctx.fig / ctx.asset
+from ..render import images as img_mod
 
 
 Flowable = Any
@@ -23,7 +21,7 @@ Flowable = Any
 class PdfCtx:
     def __init__(self, theme: PdfTheme):
         self.theme = theme
-        self.styles = self._build_styles(theme)
+        self.styles = build_styles(theme)
 
         # Mantener nombres usados por tus scripts
         self.base = self.styles["Base"]
@@ -40,126 +38,6 @@ class PdfCtx:
         self.toc0 = self.styles["TOC0"]
         self.toc1 = self.styles["TOC1"]
         self.toc2 = self.styles["TOC2"]
-
-    @staticmethod
-    def _build_styles(theme: PdfTheme) -> Dict[str, ParagraphStyle]:
-        styles = getSampleStyleSheet()
-
-        base = ParagraphStyle(
-            "Base",
-            parent=styles["Normal"],
-            fontName=theme.body_font,
-            fontSize=theme.body_size,
-            leading=theme.body_leading,
-            textColor=hex_color(theme.text_color),
-            spaceAfter=theme.space_sm,
-        )
-
-        subtitle = ParagraphStyle(
-            "Subtitle",
-            parent=base,
-            fontSize=theme.body_size,
-            leading=theme.body_leading,
-            textColor=hex_color(theme.muted_color),
-            spaceAfter=theme.space_md,
-        )
-
-        small = ParagraphStyle(
-            "Small",
-            parent=base,
-            fontSize=9,
-            leading=12,
-            textColor=hex_color(theme.muted_color),
-            spaceAfter=theme.space_sm,
-        )
-
-        h1 = ParagraphStyle(
-            "H1",
-            parent=base,
-            fontName=theme.body_font_bold,
-            fontSize=theme.h1_size,
-            leading=theme.h1_leading,
-            spaceBefore=0,
-            spaceAfter=theme.space_xs,
-            keepWithNext=1,
-        )
-
-        h2 = ParagraphStyle(
-            "H2",
-            parent=base,
-            fontName=theme.body_font_bold,
-            fontSize=theme.h2_size,
-            leading=theme.h2_leading,
-            spaceBefore=theme.space_md,
-            spaceAfter=theme.space_xs,
-            keepWithNext=1,
-        )
-
-        h3 = ParagraphStyle(
-            "H3",
-            parent=base,
-            fontName=theme.body_font_bold,
-            fontSize=theme.h3_size,
-            leading=theme.h3_leading,
-            spaceBefore=theme.space_sm,
-            spaceAfter=theme.space_xs,
-            keepWithNext=1,
-        )
-
-        note = ParagraphStyle("Note", parent=base, textColor=hex_color(theme.text_color))
-        link = ParagraphStyle("Link", parent=base, textColor=hex_color(theme.accent_color))
-
-        code = ParagraphStyle(
-            "Code",
-            parent=base,
-            fontName=theme.mono_font,
-            fontSize=10,
-            leading=14,
-            textColor=hex_color(theme.text_color),
-        )
-
-        # Table of Contents (TOC) styles
-        toc0 = ParagraphStyle(
-            "TOC0",
-            parent=base,
-            fontName=theme.body_font_bold,
-            fontSize=10,
-            leading=13,
-            leftIndent=0,
-            firstLineIndent=0,
-            spaceBefore=2,
-            spaceAfter=2,
-            textColor=hex_color(theme.text_color),
-        )
-        toc1 = ParagraphStyle(
-            "TOC1",
-            parent=toc0,
-            fontName=theme.body_font,
-            leftIndent=14,
-            firstLineIndent=0,
-            spaceBefore=1,
-            spaceAfter=1,
-        )
-        toc2 = ParagraphStyle(
-            "TOC2",
-            parent=toc1,
-            leftIndent=28,
-        )
-
-        return {
-            "Base": base,
-            "Subtitle": subtitle,
-            "Small": small,
-            "H1": h1,
-            "H2": h2,
-            "H3": h3,
-            "Note": note,
-            "Link": link,
-            "Code": code,
-            "TOC0": toc0,
-            "TOC1": toc1,
-            "TOC2": toc2,
-        }
 
     # ---- Flowable factories ----
     def p(self, html: str, style: Optional[ParagraphStyle] = None) -> Paragraph:

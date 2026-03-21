@@ -1,130 +1,119 @@
-# Formato `.txt` aceptado por el submódulo `pdf`
+# Contrato del formato `.txt`
 
-> **Objetivo**: definir el contrato funcional del archivo `.txt` que el submódulo necesita para compilar a PDF.
+## Estructura mínima
 
----
+Todo documento válido tiene:
 
-## 0) Alcance
+1. un header `[DOC ...]` en la primera línea no vacía;
+2. un `title` dentro de ese header;
+3. un cuerpo libre con bloques y texto.
 
-- Este documento describe lo que el parser acepta hoy (`pdf/format/txtfmt.py`).
-- La compilación depende del header `[DOC ...]` parseado por `pdf/engine/docheader.py`.
-- El lint/check se ejecuta en `pdf/engine/scanlib.py`.
-
-## 1) Estructura base del archivo
-
-1) La primera línea no vacía debe ser un header `[DOC ...]` válido.
-2) El resto del archivo es el cuerpo del documento.
-3) Los bloques se separan con líneas en blanco.
-4) Líneas de texto normal consecutivas se concatenan en un mismo párrafo.
-
-## 2) Header `[DOC ...]`
-
-### 2.1 Sintaxis
+Ejemplo mínimo:
 
 ```txt
-[DOC title="Práctico 01" include_toc=true toc_max_level=2 footer_right="P1"]
+[DOC title="Resumen base"]
+
+Texto inicial.
+```
+
+## Header `[DOC ...]`
+
+### Sintaxis
+
+```txt
+[DOC title="Práctico 01" include_toc=true toc_max_level=2 out="01.pdf"]
 ```
 
 Reglas:
 
-- Debe estar en una sola línea.
-- Se parsea como pares `clave=valor`.
-- Si un valor tiene espacios, usar comillas dobles.
-- Booleanos: `true`/`false`.
-- Enteros: `-1`, `0`, `3`, etc.
+- una sola línea;
+- pares `clave=valor`;
+- strings con espacios entre comillas;
+- booleanos `true` o `false`;
+- enteros simples para campos numéricos.
 
-### 2.2 Claves aceptadas
+### Claves aceptadas
 
-| Clave | Tipo | Default | Uso |
-|---|---|---|---|
-| `title` | string | sin default | Título del documento. Obligatorio para compilar. |
-| `out` | string | `<txt_stem>.pdf` | Nombre del PDF de salida. |
-| `subtitle` | string | `None` | Subtítulo del bloque de título. |
-| `meta_line` | string | `None` | Línea chica debajo del título. |
-| `include_title_block` | bool | `true` | Muestra/oculta bloque inicial de título. |
-| `include_toc` | bool | `false` | Activa índice (TOC). |
-| `toc_title` | string | `Contenido` | Título del TOC. |
-| `toc_max_level` | int | `3` | Profundidad máxima de TOC/outline. |
-| `footer_left` | string | `Lucas Borges` | Texto de pie de página izquierdo. |
-| `footer_center` | string | `Arquitectura de Computadoras` | Texto de pie de página centro. |
-| `footer_right` | string | `""` | Texto de pie de página derecho. |
-| `footer_show_page` | bool | `true` | Agrega número de página en footer derecho. |
-| `footer_link_to_toc` | bool | `true` | Link del centro del footer al TOC (si hay TOC). |
-| `author` | string | `""` | Metadata PDF. |
-| `subject` | string | `""` | Metadata PDF. |
-| `keywords` | string | `""` | Metadata PDF. |
-| `system` | string | `""` | Campo legacy de compatibilidad. |
-| `contacto` | string | `""` | Campo legacy de compatibilidad. |
+- `title`
+- `out`
+- `subtitle`
+- `meta_line`
+- `include_title_block`
+- `include_toc`
+- `toc_title`
+- `toc_max_level`
+- `footer_left`
+- `footer_center`
+- `footer_right`
+- `footer_show_page`
+- `footer_link_to_toc`
+- `author`
+- `subject`
+- `keywords`
+- `system`
+- `contacto`
 
-### 2.3 Validaciones de header
+### Validaciones
 
-- Claves desconocidas: el scan las marca como `WARN`.
-- Claves desconocidas en build: pueden romper compilación (argumento no soportado por `DocSpec`).
-- Header mal formado (ejemplo: comillas sin cerrar): `ERROR`.
+- si falta el header: `ERROR`;
+- si el header está mal cerrado o mal tokenizado: `ERROR`;
+- si falta `title`: `ERROR`;
+- si hay claves desconocidas: `WARN`;
+- en build, las claves desconocidas se ignoran en vez de romper `DocSpec`.
 
-## 3) Bloques y directivas
+## Texto normal
 
-### 3.1 Salto de página manual
+- líneas consecutivas de texto se unen en un mismo párrafo;
+- líneas en blanco cortan párrafos;
+- el inline se sanitiza antes de renderizar.
 
-```txt
-[PB]
-[PAGEBREAK]
-```
+## Títulos
 
-### 3.2 Títulos y secciones
-
-Formato en línea (dot heading):
+### Dot headings jerárquicos
 
 ```txt
-1. Introducción
 1.2. Memoria caché
 2.1.3. Políticas de escritura
 ```
 
-Formato en bloque con reglas de `=`:
+Siempre se interpretan como headings.
+
+### Numeración simple
+
+```txt
+1. Introducción
+```
+
+Se interpreta como heading solo si la línea parece un título real:
+
+- corta;
+- sin puntuación final fuerte;
+- con forma de título o mayúsculas.
+
+Si aparece en secuencia como enumeración, se trata como lista ordenada.
+
+### Títulos en bloque con `=`
 
 ```txt
 ==========
-1) Tema principal
+1) Tema
 ==========
 ```
 
 Reglas:
 
-- La regla de `=` debe tener al menos 10 caracteres.
-- Se inserta salto de página automático antes de títulos de nivel 1.
-- Si el título contiene `Ejercicio`, también fuerza salto de página.
+- la línea de `=` debe tener al menos 10 caracteres;
+- headings de nivel superior fuerzan salto de página;
+- si el título contiene `Ejercicio`, también fuerza salto.
 
-### 3.3 Separadores
+## Separadores
 
-```txt
------
-==========
-```
+- `-----`: línea horizontal;
+- `==========`: línea horizontal si no forma un heading en bloque.
 
-- `-----` (5 o más `-`) crea línea horizontal.
-- `==========` (10 o más `=`) crea línea horizontal si no forma bloque de título.
+## Listas
 
-### 3.4 Código
-
-Bloque fenced:
-
-````txt
-```c
-int main() { return 0; }
-```
-````
-
-Bloque indentado (4 espacios o tab):
-
-```txt
-    MOV AX, BX
-    ADD AX, 1
-```
-
-### 3.5 Listas
-
-No ordenada:
+### No ordenadas
 
 ```txt
 - item
@@ -132,16 +121,40 @@ No ordenada:
 • item
 ```
 
-Ordenada:
+### Ordenadas
 
 ```txt
 1) item
 2. item
 ```
 
-### 3.6 Callouts
+La lista ordenada se detecta antes que el heading simple para evitar falsos positivos.
 
-Sintaxis recomendada:
+## Código
+
+### Fence
+
+````txt
+```c
+int main() { return 0; }
+```
+````
+
+### Indentado
+
+```txt
+    MOV AX, BX
+    ADD AX, 1
+```
+
+Validación:
+
+- cierre sin apertura: `ERROR`;
+- apertura sin cierre: `ERROR`.
+
+## Callouts
+
+### Sintaxis recomendada
 
 ```txt
 :::def
@@ -149,19 +162,17 @@ Texto...
 :::
 ```
 
-Mapa de `kind`:
+Mapa principal:
 
-| `kind` | Estilo | Título default |
-|---|---|---|
-| `def` | note | Definición |
-| `ej` | info | Ejemplo |
-| `error` | danger | Error típico |
-| `tip` | note | Tip |
-| `warn` | warn | Atención |
-| `info` | info | Info |
-| `check` | info | Checklist |
+- `def` -> note
+- `ej` -> info
+- `error` -> danger
+- `tip` -> note
+- `warn` -> warn
+- `info` -> info
+- `check` -> info
 
-Compatibilidad legacy:
+### Compatibilidad legacy
 
 ```txt
 [NOTE title="Definición"]
@@ -169,9 +180,13 @@ Texto...
 [/NOTE]
 ```
 
-KIND legacy válidos: `NOTE`, `WARN`, `DANGER`, `INFO`, `TIP`, `CHECK`.
+Validación:
 
-### 3.7 Tablas
+- cierre sin apertura: `ERROR`;
+- cierre que no matchea apertura: `ERROR`;
+- bloque abierto sin cierre: `ERROR`.
+
+## Tablas
 
 ```txt
 :::table
@@ -183,87 +198,62 @@ KIND legacy válidos: `NOTE`, `WARN`, `DANGER`, `INFO`, `TIP`, `CHECK`.
 
 Reglas:
 
-- Solo se consideran filas que empiecen con `|`.
-- La segunda fila puede definir alineación (`:---`, `---:`, `:---:`).
-- No hay escape de `|` dentro de celdas.
+- solo cuentan filas que empiezan con `|`;
+- la segunda fila puede definir alineación;
+- no hay escape de `|` dentro de una celda.
 
-### 3.8 Figuras e imágenes
+## Saltos de página
 
-Página de PDF (`[FIG]`):
+```txt
+[PB]
+[PAGEBREAK]
+```
+
+## Figuras e imágenes
+
+### Página de PDF
 
 ```txt
 [FIG file="teorico.pdf" page=3 caption="Jerarquía" zoom=2.0]
 ```
 
-Imagen (`[IMG]`):
+### Imagen
 
 ```txt
-[IMG file="diagrama.png" caption="Esquema" max_w=420 max_h=260]
+[IMG file="diagrama.png" caption="Esquema" width=420]
 ```
 
 Reglas:
 
-- `file` es obligatorio.
-- En `[FIG]`, `page` es obligatorio y 1-based.
-- En `[FIG]`, `zoom` debe ser mayor a 0.
-- Si el asset no se encuentra, el scan marca `WARN`.
+- `file` es obligatorio en ambos;
+- en `FIG`, `page` es obligatorio y es 1-based;
+- `zoom` debe ser mayor a 0;
+- en `IMG`, `width` es opcional y controla el ancho máximo;
+- si falta el asset, scan marca `WARN`.
 
-## 4) Formato inline
+## Inline soportado
 
-Se soporta:
+- negrita: `**texto**`
+- cursiva: `*texto*`
+- código inline: `` `texto` ``
 
-- Negrita: `**texto**`
-- Cursiva: `*texto*`
-- Código inline: `` `texto` ``
-- Link markdown: `[label](https://ejemplo.com)`
-- URL plana: `https://ejemplo.com`
-- Color inline: `[color=#2563EB]texto[/color]` o `[c=blue]texto[/c]`
+No se soporta como contrato activo:
 
-Comportamiento relevante:
+- color inline;
+- links markdown renderizados;
+- HTML libre.
 
-- Dentro de `` `...` `` no se aplica negrita/cursiva/color/link.
-- El HTML libre no se interpreta (el parser escapa contenido).
-- Símbolos Unicode y emojis se normalizan para mantener compatibilidad de fuentes PDF.
+Dentro de código inline no se aplican estilos de negrita/cursiva.
 
-## 5) Reglas de lint/check
+## Qué valida el lint
 
-El lint detecta, entre otros:
+- header ausente/inválido;
+- `title` faltante;
+- fences desbalanceados;
+- callouts desbalanceados;
+- bloques `:::` desbalanceados;
+- `[FIG]` o `[IMG]` inválidos;
+- `[FIG]` con `page < 1` o `zoom <= 0`;
+- assets faltantes en `FIG` o `IMG`.
 
-- Fence de código abierto sin cierre o cierre sin apertura (`ERROR`).
-- Bloques `:::` abiertos/cerrados incorrectamente (`ERROR`).
-- Callouts legacy mal cerrados (`ERROR`).
-- Marcadores `[FIG]`/`[IMG]` inválidos (`ERROR`).
-- `[FIG]` con `page < 1` o `zoom <= 0` (`ERROR`).
-- Asset faltante en `[FIG]` o `[IMG]` (`WARN`).
-- Claves DOC desconocidas (`WARN`).
-
-Con `--strict`, los `WARN` cuentan como error de salida.
-
-## 6) Plantilla mínima recomendada
-
-```txt
-[DOC title="Resumen base" include_toc=true toc_max_level=2]
-
-==========
-1) Objetivo
-==========
-
-:::def
-Definición corta.
-:::
-
-1.1. Ejemplo
-
-- Punto A
-- Punto B
-
-[IMG file="esquema.png" caption="Diagrama general" max_w=420]
-```
-
-## 7) Checklist operativo
-
-- Header `[DOC ...]` válido en primera línea no vacía.
-- `title` definido en header.
-- Bloques `:::` y fences ``` cerrados.
-- Marcadores `[FIG]` y `[IMG]` con sintaxis exacta.
-- Assets disponibles en rutas de búsqueda.
+Con `--strict`, los `WARN` afectan el exit code.

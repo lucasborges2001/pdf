@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-class PdfBuildError(RuntimeError):
-    pass
+from ..pipeline.errors import PdfBuildError, PdfScanError
 
-class PdfScanError(RuntimeError):
-    pass
+__all__ = ["PdfBuildError", "PdfScanError"]

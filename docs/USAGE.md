@@ -1,87 +1,78 @@
-# Uso operativo del submódulo `pdf`
+# Uso operativo
 
-> **Objetivo**: documentar cómo ejecutar el submódulo y qué hace cada comando de CLI.
+## Flujo recomendado
 
----
+### 1. Validar
 
-## 0) Convención de módulo
-
-El código está en `pdf/`. Según cómo lo integres, el paquete puede invocarse como `pdf` o `_pdf`.
-
-En los ejemplos se usa `<pkg>` para evitar ambigüedad:
-
-- `python -m <pkg>.build`
-- `python -m <pkg>.scan`
-
-## 1) Comandos principales
-
-### 1.1 Ayuda
+Para una materia:
 
 ```powershell
-python -m <pkg>.help
+python -m _pdf.scan --materia D:\SisOp
 ```
 
-### 1.2 Build simple (`input/*.txt` -> `output/*.pdf`)
+Para `input/` del repo:
 
 ```powershell
-python -m <pkg>.build
-python -m <pkg>.build --clean
-python -m <pkg>.build --check
-python -m <pkg>.build --check --strict
-python -m <pkg>.build --materia D:\ArqComp --search-dir D:\assets
+python -m _pdf.scan --input
 ```
 
-Comportamiento:
-
-- Compilación normal: toma `pdf/input/*.txt` y genera `pdf/output/*.pdf`.
-- `--check`: valida formato/markers y no genera PDFs.
-- `--clean`: borra `pdf/output/` antes de compilar.
-- `--materia` y `--search-dir`: agregan contexto para resolver assets en modo build.
-
-### 1.3 Build por materia
+### 2. Endurecer el pipeline
 
 ```powershell
-python -m <pkg>.build_materia --materia D:\ArqComp
-python -m <pkg>.build_materia --materia D:\ArqComp --area practico
-python -m <pkg>.build_materia --materia D:\ArqComp --area taller
-python -m <pkg>.build_materia --materia D:\ArqComp --area teorico
-python -m <pkg>.build_materia --materia D:\ArqComp --area both
-python -m <pkg>.build_materia --materia D:\ArqComp --only 00 01 07
-python -m <pkg>.build_materia --materia D:\ArqComp --check --strict
+python -m _pdf.scan --materia D:\SisOp --strict
 ```
 
-Comportamiento:
-
-- Descubre `.txt` recursivamente en la materia (con exclusiones de carpetas técnicas).
-- Genera salida en `<Materia>/Resumenes/<Area>/`.
-- Además deja una copia junto al `.txt` origen.
-
-### 1.4 Build recursivo por carpeta
+o
 
 ```powershell
-python -m <pkg>.build_carpeta --carpeta D:\repo\docs\tutoriales_cargadores
-python -m <pkg>.build_carpeta --carpeta D:\repo\docs\tutoriales_cargadores --only crearUsuario
-python -m <pkg>.build_carpeta --carpeta D:\repo\docs\tutoriales_cargadores --check --strict
+python -m _pdf.build --check --strict
 ```
 
-Comportamiento:
-
-- Recorre una carpeta arbitraria en forma recursiva.
-- Genera cada PDF en la misma carpeta del `.txt`.
-- `--only` filtra por nombre de carpeta o stem del archivo.
-
-### 1.5 Scan/Lint (sin generar PDF)
+### 3. Compilar
 
 ```powershell
-python -m <pkg>.scan --input
-python -m <pkg>.scan --materia D:\ArqComp
-python -m <pkg>.scan --materia D:\ArqComp --strict
-python -m <pkg>.scan --materia D:\ArqComp --show-skipped
+python -m _pdf.build
+python -m _pdf.build_materia --materia D:\SisOp
+python -m _pdf.build_carpeta --carpeta D:\repo\docs\tutoriales
 ```
 
-## 2) Flags comunes
+## Comandos
 
-Aplica a `build`, `build_materia`, `build_carpeta`, `scan` (y en parte `help`):
+### Build simple
+
+```powershell
+python -m _pdf.build
+python -m _pdf.build --clean
+python -m _pdf.build --check
+python -m _pdf.build --check --strict
+python -m _pdf.build --materia D:\SisOp --search-dir D:\assets
+```
+
+### Build por materia
+
+```powershell
+python -m _pdf.build_materia --materia D:\SisOp
+python -m _pdf.build_materia --materia D:\SisOp --area practico
+python -m _pdf.build_materia --materia D:\SisOp --area both
+python -m _pdf.build_materia --materia D:\SisOp --only 00 01 07
+python -m _pdf.build_materia --materia D:\SisOp --check --strict
+```
+
+### Build por carpeta
+
+```powershell
+python -m _pdf.build_carpeta --carpeta D:\repo\docs\tutoriales
+python -m _pdf.build_carpeta --carpeta D:\repo\docs\tutoriales --only crearUsuario cargarSaldo
+python -m _pdf.build_carpeta --carpeta D:\repo\docs\tutoriales --check --strict
+```
+
+### Ayuda
+
+```powershell
+python -m _pdf.help
+```
+
+## Flags comunes
 
 - `--quiet`
 - `--only-summary`
@@ -89,50 +80,53 @@ Aplica a `build`, `build_materia`, `build_carpeta`, `scan` (y en parte `help`):
 - `-v`, `-vv`
 - `--no-color`
 - `--ascii`
-- `--log <archivo>`
-- `--log-json <archivo>`
-- `--max-issues <N>`
+- `--log FILE`
+- `--log-json FILE`
+- `--max-issues N`
 - `--show-skipped`
-- `--max-skipped <N>`
+- `--max-skipped N`
 
-## 3) Exit codes
+## Exit codes
 
-- `0`: ejecución OK.
-- `1`: errores de lint/build (o `WARN` en modo `--strict`).
-- `2`: parámetros inválidos o ruta inválida (ejemplo: `--materia` inexistente).
+- `0`: ejecución correcta;
+- `1`: errores, o warnings si se usa `--strict`;
+- `2`: parámetro o ruta inválida.
 
-## 4) Resolución de assets (`[FIG]` y `[IMG]`)
+## Resolución de assets
 
-Orden de búsqueda real (`engine/assets.py`):
+Orden de búsqueda:
 
-1) carpeta del `.txt`
-2) rutas de `PDF_FIG_SEARCH_DIRS`
-3) rutas repetidas en `--search-dir`
-4) si hay `materia`: `Teorico/`, `Practico/`, `Taller/`, raíz de materia
+1. carpeta del `.txt`;
+2. `PDF_FIG_SEARCH_DIRS`;
+3. `--search-dir`;
+4. si hay materia: `Teorico/`, `Practico/`, `Taller/`, raíz de materia.
 
-Si no se encuentra el archivo:
+## Error típico resuelto
 
-- Scan/check: `WARN`.
-- Build: puede omitir la figura o fallar según el caso concreto del render.
+### Mensaje
 
-## 5) Descubrimiento de `.txt` en modo materia/carpeta
+```txt
+DocSpec.__init__() missing 1 required positional argument: 'title'
+```
 
-Exclusiones por defecto del scan recursivo:
+### Estado actual
 
-- `Resumenes`
-- `output`
-- `__pycache__`
-- `.git`
-- `.venv`, `venv`
-- `.mypy_cache`, `.pytest_cache`
-- `Scripts`
-- `_pdf`
+Ese error ya no debería aparecer como excepción tardía si el archivo pasa por el flujo actual.
 
-Heurística de candidato (`scanlib._is_candidate_txt`): se lint-ea un `.txt` si detecta header `[DOC ...]` o tokens como `[FIG`, `[IMG`, `:::`, `[NOTE]`, `[WARN]`, `[TIP]`, `[PB]`.
+Ahora se detecta antes con mensajes explícitos:
 
-## 6) Checklist de ejecución
+- `Falta header [DOC ...] en la primera línea no vacía.`
+- `Header [DOC] debe incluir title.`
+- `Header [DOC ...] inválido: ...`
 
-- Verificar que el `.txt` cumple `docs/FORMAT.md`.
-- Ejecutar `--check` antes de build masivo.
-- Usar `--strict` para pipelines CI o validaciones de calidad.
-- Si faltan assets, revisar rutas y `PDF_FIG_SEARCH_DIRS`.
+## Tests
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+Notas:
+
+- la suite está preparada para correr desde la raíz del repo;
+- si `reportlab` no está instalado, los tests que ejercitan render/flowables se saltean;
+- parser/header/discovery/lint siguen validándose sin esa dependencia.

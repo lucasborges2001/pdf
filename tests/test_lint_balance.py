@@ -1,23 +1,34 @@
 import unittest
 from pathlib import Path
-import tempfile
 
-from _pdf.engine.scanlib import lint_txt
+import tests._path  # noqa: F401
+from tests._tmp import temporary_directory
+
+from _pdf.pipeline.scan import lint_txt
+
 
 class TestLintBalance(unittest.TestCase):
     def test_unclosed_fence(self):
-        with tempfile.TemporaryDirectory() as td:
-            p = Path(td) / "a.txt"
-            p.write_text('[DOC title="X"]\n```\ncode\n', encoding="utf-8")
-            issues = lint_txt(txt_path=p, materia=None)
-            self.assertTrue(any(i.severity == "ERROR" and "```" in i.msg for i in issues))
+        with temporary_directory() as td:
+            path = Path(td) / "a.txt"
+            path.write_text('[DOC title="X"]\n```\ncode\n', encoding="utf-8")
+            issues = lint_txt(txt_path=path, materia=None)
+            self.assertTrue(any(issue.severity == "ERROR" and "```" in issue.msg for issue in issues))
 
     def test_callout_mismatch(self):
-        with tempfile.TemporaryDirectory() as td:
-            p = Path(td) / "b.txt"
-            p.write_text('[DOC title="X"]\n[NOTE]\nhi\n[/TIP]\n', encoding="utf-8")
-            issues = lint_txt(txt_path=p, materia=None)
-            self.assertTrue(any(i.severity == "ERROR" and "no matchea" in i.msg for i in issues))
+        with temporary_directory() as td:
+            path = Path(td) / "b.txt"
+            path.write_text('[DOC title="X"]\n[NOTE]\nhi\n[/TIP]\n', encoding="utf-8")
+            issues = lint_txt(txt_path=path, materia=None)
+            self.assertTrue(any(issue.severity == "ERROR" and "no matchea" in issue.msg for issue in issues))
+
+    def test_missing_title_is_reported_early(self):
+        with temporary_directory() as td:
+            path = Path(td) / "c.txt"
+            path.write_text('[DOC include_toc=true]\nContenido\n', encoding="utf-8")
+            issues = lint_txt(txt_path=path, materia=None)
+            self.assertTrue(any(issue.severity == "ERROR" and "debe incluir title" in issue.msg for issue in issues))
+
 
 if __name__ == "__main__":
     unittest.main()

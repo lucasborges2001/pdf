@@ -1,6 +1,8 @@
 import unittest
 
-from _pdf.format.txtfmt import sanitize_para
+import tests._path  # noqa: F401
+
+from _pdf.parser.inline import sanitize_para
 
 
 class TestInlineCodeProtection(unittest.TestCase):
